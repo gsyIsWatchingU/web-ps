@@ -50,6 +50,7 @@ const fontWeightOptions: Array<{
 export function EditorWorkspace() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [lastAutoSavedAt, setLastAutoSavedAt] = useState<string | null>(null);
   const {
     activeTool,
     addDecorationLayer,
@@ -64,6 +65,7 @@ export function EditorWorkspace() {
     redo,
     selectedLayerIds,
     selectLayer,
+    setSelectedLayerIds,
     setActiveTool,
     setCanvasPreset,
     toggleLayerLock,
@@ -90,6 +92,10 @@ export function EditorWorkspace() {
   const selectedDecorationLayer = getSelectedDecorationLayer(selectedLayer);
   const canUndo = historyPast.length > 0;
   const canRedo = historyFuture.length > 0;
+
+  useEffect(() => {
+    setLastAutoSavedAt(document.draftMeta.lastSavedAt);
+  }, [document.draftMeta.lastSavedAt]);
 
   const handleImportClick = () => {
     fileInputRef.current?.click();
@@ -151,6 +157,33 @@ export function EditorWorkspace() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [redo, undo]);
+
+  useEffect(() => {
+    if (!document.draftMeta.enabled) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      try {
+        const savedAt = new Date().toISOString();
+        window.localStorage.setItem(
+          document.draftMeta.storageKey,
+          JSON.stringify({
+            ...document,
+            draftMeta: {
+              ...document.draftMeta,
+              lastSavedAt: savedAt
+            }
+          })
+        );
+        setLastAutoSavedAt(savedAt);
+      } catch {
+        // Ignore storage quota and private-mode errors for now.
+      }
+    }, 240);
+
+    return () => window.clearTimeout(timer);
+  }, [document]);
 
   return (
     <div className="workspace">
@@ -343,6 +376,8 @@ export function EditorWorkspace() {
 
           <CanvasViewport
             document={document}
+            onSelectionChange={setSelectedLayerIds}
+            onTransformChange={updateLayerTransform}
             selectedLayerIds={selectedLayerIds}
             zoomPercent={zoomPercent}
           />
@@ -351,7 +386,20 @@ export function EditorWorkspace() {
         <section className="workspace__statusbar">
           <div className="workspace__status-group">
             <span>选中图层：{selectedLayer?.name ?? "无"}</span>
-            <span>草稿：{document.draftMeta.enabled ? "已启用" : "未启用"}</span>
+            <span>
+              草稿：
+              {document.draftMeta.enabled
+                ? lastAutoSavedAt
+                  ? `已保存 ${new Date(lastAutoSavedAt).toLocaleTimeString(
+                      "zh-CN",
+                      {
+                        hour: "2-digit",
+                        minute: "2-digit"
+                      }
+                    )}`
+                  : "已启用"
+                : "未启用"}
+            </span>
             <span>导出：{document.exportConfig.format.toUpperCase()}</span>
           </div>
           <div className="workspace__status-group">

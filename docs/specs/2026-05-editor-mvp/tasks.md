@@ -43,45 +43,45 @@
 
 ### T5. 花字样式系统
 
-- Status: todo
+- Status: done
 - Owner: frontend
 - Depends on: T1, T4
 - Acceptance: 文字层支持 `描边 / 阴影 / 渐变 / 背景条` 四类样式，并可通过属性面板调整。
-- Notes: 对应 `AC-4`。
+- Notes: 对应 `AC-4`。当前已支持新增文字层、编辑文案、字号、字重、描边、阴影、渐变和背景条。
 
 ### T6. 基础滤镜
 
-- Status: todo
+- Status: done
 - Owner: frontend
 - Depends on: T3
 - Acceptance: 图片层支持 `亮度 / 对比度 / 饱和度 / 模糊 / 锐化 / 色温` 调节，并在画布中即时预览。
-- Notes: 对应 `AC-5`。
+- Notes: 对应 `AC-5`。当前已接入 Fabric 运行时滤镜预览。
 
 ### T7. 历史栈与命令层
 
-- Status: todo
+- Status: in_progress
 - Owner: frontend
 - Depends on: T2, T4, T5, T6
 - Acceptance: 连续操作至少 20 次后，`undo / redo` 与画布视觉状态保持一致。
-- Notes: 对应 `AC-6`。
+- Notes: 对应 `AC-6`。撤销 / 重做与画布对象回写已落地，仍缺“20 次连续操作”的正式自测记录。
 
 ### T8. 草稿恢复与导出
 
-- Status: todo
+- Status: in_progress
 - Owner: frontend
 - Depends on: T7
 - Acceptance: 支持本地草稿恢复和 PNG/JPEG 导出，导出结果尺寸与配置一致。
-- Notes: 对应 `AC-7`, `AC-8`。
+- Notes: 对应 `AC-7`, `AC-8`。本地草稿恢复与 PNG/JPEG 导出已落地，仍缺导出一致性与异常场景校验。
 
 ## 联调任务
 
 ### I1. 图层与 runtime 同步校验
 
-- Status: todo
+- Status: in_progress
 - Owner: frontend
 - Depends on: T4, T7
 - Acceptance: 图层面板状态、当前选中态和实际画布对象状态一致。
-- Notes: 重点检查排序、隐藏、锁定和复制场景。
+- Notes: 重点检查排序、隐藏、锁定和复制场景。当前已接入选中态和对象变换回写，但仍需系统联调验证。
 
 ### I2. 样式与导出一致性校验
 
@@ -113,11 +113,11 @@
 
 ### D1. 文档回写
 
-- Status: todo
+- Status: in_progress
 - Owner: frontend
 - Depends on: T1, T8, Q1, Q2
 - Acceptance: `spec.md`、`design.md`、`tasks.md` 根据最终实现结果回写完成，关键长期决策同步到 ADR。
-- Notes: 未完成不视为 done。
+- Notes: 已开始同步 README、vision、roadmap、spec、tasks 与 MVP 审计文档，待 Q1/Q2 自测完成后再收口为 done。
 
 ## Done Definition
 

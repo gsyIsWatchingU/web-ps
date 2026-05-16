@@ -21,6 +21,12 @@ type SeedCanvasOptions = {
   showSafeArea?: boolean;
 };
 
+type LayerObject = FabricObject & {
+  data?: {
+    layerId?: string;
+  };
+};
+
 function applyCommonProps(object: FabricObject, layer: EditorLayer, isSelected: boolean) {
   object.set({
     left: layer.transform.x,
@@ -36,6 +42,19 @@ function applyCommonProps(object: FabricObject, layer: EditorLayer, isSelected: 
     hasControls: !layer.locked,
     hasBorders: !layer.locked
   });
+
+  (object as LayerObject).data = {
+    ...(object as LayerObject).data,
+    layerId: layer.id
+  };
+
+  if (isSelected) {
+    object.set({
+      borderColor: "#cd5c2d",
+      cornerColor: "#cd5c2d",
+      cornerStrokeColor: "#fffaf3"
+    });
+  }
 }
 
 function createSafeArea(document: EditorDocument) {
@@ -283,6 +302,18 @@ export async function seedCanvas(
 
     applyCommonProps(object, layer, selectedLayerIds.includes(layer.id));
     canvas.add(object);
+  }
+
+  const activeLayerId = selectedLayerIds[0];
+
+  if (activeLayerId) {
+    const activeObject = canvas
+      .getObjects()
+      .find((object) => (object as LayerObject).data?.layerId === activeLayerId);
+
+    if (activeObject) {
+      canvas.setActiveObject(activeObject);
+    }
   }
 
   canvas.requestRenderAll();

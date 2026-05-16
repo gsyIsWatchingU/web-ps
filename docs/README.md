@@ -8,10 +8,11 @@
 
 1. [产品愿景](./product/vision.md)
 2. [路线图](./product/roadmap.md)
-3. [编辑器领域模型](./domain/editor-model.md)
-4. [开发流程](./process/dev-workflow.md)
-5. 最近一个功能包下的 `spec.md / design.md / tasks.md`
-6. 相关 [ADR](./adr/)
+3. [MVP 审计](./product/mvp-audit.md)
+4. [编辑器领域模型](./domain/editor-model.md)
+5. [开发流程](./process/dev-workflow.md)
+6. 最近一个功能包下的 `spec.md / design.md / tasks.md`
+7. 相关 [ADR](./adr/)
 
 ## 目录说明
 
@@ -42,6 +43,7 @@
 
 - [产品愿景](./product/vision.md)
 - [路线图](./product/roadmap.md)
+- [MVP 审计](./product/mvp-audit.md)
 - [编辑器领域模型](./domain/editor-model.md)
 - [开发流程](./process/dev-workflow.md)
 - [ADR-0001: 编辑器内核选型](./adr/0001-editor-core.md)

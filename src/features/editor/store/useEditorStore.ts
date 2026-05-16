@@ -33,6 +33,7 @@ type EditorStore = {
   setCanvasPreset: (presetId: CanvasPresetId) => void;
   setZoomPercent: (value: number) => void;
   selectLayer: (layerId: string) => void;
+  setSelectedLayerIds: (layerIds: string[]) => void;
   importImage: (file: File) => Promise<void>;
   addTextLayer: () => void;
   addDecorationLayer: () => void;
@@ -62,7 +63,6 @@ type EditorStore = {
   redo: () => void;
 };
 
-const initialDocument = editorDocumentSchema.parse(createInitialDocument());
 const HISTORY_LIMIT = 60;
 
 function touchDocument(document: EditorDocument, layers?: EditorLayer[]) {
@@ -120,32 +120,68 @@ function commitDocumentChange(
   };
 }
 
-function loadImageMetadata(file: File) {
-  const objectUrl = URL.createObjectURL(file);
-
+function loadImageAsset(file: File) {
   return new Promise<{
-    objectUrl: string;
+    source: string;
     width: number;
     height: number;
   }>((resolve, reject) => {
-    const image = new Image();
+    const reader = new FileReader();
 
-    image.onload = () => {
-      resolve({
-        objectUrl,
-        width: image.naturalWidth || image.width,
-        height: image.naturalHeight || image.height
-      });
+    reader.onload = () => {
+      const source = typeof reader.result === "string" ? reader.result : null;
+
+      if (!source) {
+        reject(new Error(`Failed to read image: ${file.name}`));
+        return;
+      }
+
+      const image = new Image();
+
+      image.onload = () => {
+        resolve({
+          source,
+          width: image.naturalWidth || image.width,
+          height: image.naturalHeight || image.height
+        });
+      };
+
+      image.onerror = () => {
+        reject(new Error(`Failed to load image: ${file.name}`));
+      };
+
+      image.src = source;
     };
 
-    image.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      reject(new Error(`Failed to load image: ${file.name}`));
+    reader.onerror = () => {
+      reject(new Error(`Failed to read image: ${file.name}`));
     };
 
-    image.src = objectUrl;
+    reader.readAsDataURL(file);
   });
 }
+
+function loadInitialDocument() {
+  const fallback = createInitialDocument();
+
+  if (typeof window === "undefined") {
+    return editorDocumentSchema.parse(fallback);
+  }
+
+  try {
+    const raw = window.localStorage.getItem(fallback.draftMeta.storageKey);
+
+    if (!raw) {
+      return editorDocumentSchema.parse(fallback);
+    }
+
+    return editorDocumentSchema.parse(JSON.parse(raw));
+  } catch {
+    return editorDocumentSchema.parse(fallback);
+  }
+}
+
+const initialDocument = loadInitialDocument();
 
 function buildImageTransform(
   canvasWidth: number,
@@ -241,8 +277,9 @@ export const useEditorStore = create<EditorStore>((set) => ({
     }),
   setZoomPercent: (value) => set({ zoomPercent: value }),
   selectLayer: (layerId) => set({ selectedLayerIds: [layerId] }),
+  setSelectedLayerIds: (layerIds) => set({ selectedLayerIds: layerIds }),
   importImage: async (file) => {
-    const asset = await loadImageMetadata(file);
+    const asset = await loadImageAsset(file);
 
     set((state) => {
       const nextLayer: EditorLayer = {
@@ -259,7 +296,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
           asset.width,
           asset.height
         ),
-        source: asset.objectUrl,
+        source: asset.source,
         originalWidth: asset.width,
         originalHeight: asset.height,
         cropHint: "planned",
