@@ -96,7 +96,7 @@ function createImagePlaceholder(layer: ImageLayer) {
     fontWeight: 700
   });
   const desc = new Textbox(
-    "这里会显示导入的商品图或海报初稿。当前版本已支持裁剪适配、电商滤镜预设和导出成品。",
+    "这里会显示导入的商品图或海报初稿。当前版本支持裁剪、电商滤镜、AI 局部修复、AI 扩图和导出成品。",
     {
       left: 34,
       top: 100,
@@ -159,9 +159,7 @@ function applyImageFilters(image: FabricImage, layer: ImageLayer) {
   const nextFilters = [];
 
   if (layer.filters.brightness !== 0) {
-    nextFilters.push(
-      new filters.Brightness({ brightness: layer.filters.brightness })
-    );
+    nextFilters.push(new filters.Brightness({ brightness: layer.filters.brightness }));
   }
 
   if (layer.filters.contrast !== 0) {
@@ -169,9 +167,7 @@ function applyImageFilters(image: FabricImage, layer: ImageLayer) {
   }
 
   if (layer.filters.saturation !== 0) {
-    nextFilters.push(
-      new filters.Saturation({ saturation: layer.filters.saturation })
-    );
+    nextFilters.push(new filters.Saturation({ saturation: layer.filters.saturation }));
   }
 
   if (layer.filters.blur !== 0) {

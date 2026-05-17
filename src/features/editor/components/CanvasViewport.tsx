@@ -1,12 +1,17 @@
 import { Canvas } from "fabric";
 import { useEffect, useRef } from "react";
-import type { EditorDocument } from "../model/document";
-import type { EditorTool } from "../store/useEditorStore";
+import type {
+  EditorDocument,
+  EditorTool,
+  ImageLayer,
+  MaskPoint
+} from "../model/document";
 import { seedCanvas } from "../runtime/seedCanvas";
 
 type CanvasViewportProps = {
   activeTool: EditorTool;
   document: EditorDocument;
+  selectedImageLayer: ImageLayer | null;
   selectedLayerIds: string[];
   onSelectionChange: (layerIds: string[]) => void;
   onTransformChange: (
@@ -21,9 +26,10 @@ type CanvasViewportProps = {
       flipY: boolean;
     }
   ) => void;
-  onViewportChange: (
-    viewport: Partial<EditorDocument["canvas"]["viewport"]>
-  ) => void;
+  onViewportChange: (viewport: Partial<EditorDocument["canvas"]["viewport"]>) => void;
+  onMaskStart: (layerId: string, mode: "paint" | "erase", point: MaskPoint) => void;
+  onMaskAppend: (layerId: string, point: MaskPoint) => void;
+  onMaskFinish: (layerId: string) => void;
 };
 
 type LayerCanvasObject = {
@@ -69,25 +75,113 @@ function getPointerClientPosition(event: MouseEvent | TouchEvent) {
   };
 }
 
+function drawMaskOverlay(
+  context: CanvasRenderingContext2D,
+  layer: ImageLayer,
+  viewport: EditorDocument["canvas"]["viewport"]
+) {
+  context.clearRect(0, 0, context.canvas.width, context.canvas.height);
+
+  if (!layer.mask.showPreview) {
+    return;
+  }
+
+  context.save();
+  context.setTransform(viewport.zoom, 0, 0, viewport.zoom, viewport.panX, viewport.panY);
+
+  for (const stroke of layer.mask.strokes) {
+    if (stroke.points.length === 0) {
+      continue;
+    }
+
+    context.beginPath();
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.strokeStyle =
+      stroke.mode === "paint" ? "rgba(205, 92, 45, 0.38)" : "rgba(255, 255, 255, 0.82)";
+    context.lineWidth = stroke.size * layer.transform.scaleX;
+
+    stroke.points.forEach((point, index) => {
+      const x = layer.transform.x + point.x * layer.crop.width * layer.transform.scaleX;
+      const y = layer.transform.y + point.y * layer.crop.height * layer.transform.scaleY;
+
+      if (index === 0) {
+        context.moveTo(x, y);
+      } else {
+        context.lineTo(x, y);
+      }
+    });
+
+    context.stroke();
+  }
+
+  context.restore();
+}
+
+function mapClientPointToDocument(
+  clientX: number,
+  clientY: number,
+  rect: DOMRect,
+  viewport: EditorDocument["canvas"]["viewport"]
+) {
+  return {
+    x: (clientX - rect.left - viewport.panX) / viewport.zoom,
+    y: (clientY - rect.top - viewport.panY) / viewport.zoom
+  };
+}
+
+function mapDocumentPointToImage(
+  docPoint: { x: number; y: number },
+  layer: ImageLayer
+) {
+  const width = layer.crop.width * layer.transform.scaleX;
+  const height = layer.crop.height * layer.transform.scaleY;
+
+  if (width <= 0 || height <= 0) {
+    return null;
+  }
+
+  const normalizedX = (docPoint.x - layer.transform.x) / width;
+  const normalizedY = (docPoint.y - layer.transform.y) / height;
+
+  if (
+    normalizedX < 0 ||
+    normalizedY < 0 ||
+    normalizedX > 1 ||
+    normalizedY > 1
+  ) {
+    return null;
+  }
+
+  return {
+    x: normalizedX,
+    y: normalizedY
+  } satisfies MaskPoint;
+}
+
 export function CanvasViewport({
   activeTool,
   document,
+  selectedImageLayer,
   selectedLayerIds,
   onSelectionChange,
   onTransformChange,
-  onViewportChange
+  onViewportChange,
+  onMaskStart,
+  onMaskAppend,
+  onMaskFinish
 }: CanvasViewportProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const runtimeRef = useRef<Canvas | null>(null);
   const suppressSyncRef = useRef(false);
-  const panSessionRef = useRef<{
-    isPanning: boolean;
-    lastX: number;
-    lastY: number;
-  }>({
+  const panSessionRef = useRef({
     isPanning: false,
     lastX: 0,
     lastY: 0
+  });
+  const drawSessionRef = useRef({
+    isDrawing: false
   });
 
   useEffect(() => {
@@ -150,52 +244,102 @@ export function CanvasViewport({
     };
 
     const handleMouseDown = (event: { e: MouseEvent | TouchEvent }) => {
-      if (activeTool !== "hand") {
+      const pointer = getPointerClientPosition(event.e);
+
+      if (activeTool === "hand") {
+        panSessionRef.current = {
+          isPanning: true,
+          lastX: pointer.x,
+          lastY: pointer.y
+        };
+        runtime.discardActiveObject();
+        runtime.selection = false;
+        runtime.requestRenderAll();
         return;
       }
 
-      const pointer = getPointerClientPosition(event.e);
+      if (
+        (activeTool === "brush" || activeTool === "eraser") &&
+        selectedImageLayer &&
+        overlayRef.current
+      ) {
+        const rect = overlayRef.current.getBoundingClientRect();
+        const docPoint = mapClientPointToDocument(
+          pointer.x,
+          pointer.y,
+          rect,
+          document.canvas.viewport
+        );
+        const imagePoint = mapDocumentPointToImage(docPoint, selectedImageLayer);
 
-      panSessionRef.current = {
-        isPanning: true,
-        lastX: pointer.x,
-        lastY: pointer.y
-      };
-      runtime.discardActiveObject();
-      runtime.selection = false;
-      runtime.requestRenderAll();
+        if (!imagePoint) {
+          return;
+        }
+
+        drawSessionRef.current.isDrawing = true;
+        onMaskStart(
+          selectedImageLayer.id,
+          activeTool === "brush" ? "paint" : "erase",
+          imagePoint
+        );
+      }
     };
 
     const handleMouseMove = (event: { e: MouseEvent | TouchEvent }) => {
-      if (!panSessionRef.current.isPanning || activeTool !== "hand") {
+      const pointer = getPointerClientPosition(event.e);
+
+      if (panSessionRef.current.isPanning && activeTool === "hand") {
+        const deltaX = pointer.x - panSessionRef.current.lastX;
+        const deltaY = pointer.y - panSessionRef.current.lastY;
+        const viewportTransform = runtime.viewportTransform ?? [1, 0, 0, 1, 0, 0];
+
+        viewportTransform[4] += deltaX;
+        viewportTransform[5] += deltaY;
+        runtime.setViewportTransform(viewportTransform);
+
+        panSessionRef.current.lastX = pointer.x;
+        panSessionRef.current.lastY = pointer.y;
         return;
       }
 
-      const pointer = getPointerClientPosition(event.e);
-      const deltaX = pointer.x - panSessionRef.current.lastX;
-      const deltaY = pointer.y - panSessionRef.current.lastY;
-      const viewportTransform = runtime.viewportTransform ?? [1, 0, 0, 1, 0, 0];
+      if (
+        drawSessionRef.current.isDrawing &&
+        selectedImageLayer &&
+        overlayRef.current &&
+        (activeTool === "brush" || activeTool === "eraser")
+      ) {
+        const rect = overlayRef.current.getBoundingClientRect();
+        const docPoint = mapClientPointToDocument(
+          pointer.x,
+          pointer.y,
+          rect,
+          document.canvas.viewport
+        );
+        const imagePoint = mapDocumentPointToImage(docPoint, selectedImageLayer);
 
-      viewportTransform[4] += deltaX;
-      viewportTransform[5] += deltaY;
-      runtime.setViewportTransform(viewportTransform);
+        if (!imagePoint) {
+          return;
+        }
 
-      panSessionRef.current.lastX = pointer.x;
-      panSessionRef.current.lastY = pointer.y;
+        onMaskAppend(selectedImageLayer.id, imagePoint);
+      }
     };
 
-    const stopPan = () => {
-      if (!panSessionRef.current.isPanning) {
-        return;
+    const stopInteraction = () => {
+      if (panSessionRef.current.isPanning) {
+        panSessionRef.current.isPanning = false;
+        const viewportTransform = runtime.viewportTransform ?? [1, 0, 0, 1, 0, 0];
+        onViewportChange({
+          zoom: viewportTransform[0] ?? 1,
+          panX: viewportTransform[4] ?? 0,
+          panY: viewportTransform[5] ?? 0
+        });
       }
 
-      panSessionRef.current.isPanning = false;
-      const viewportTransform = runtime.viewportTransform ?? [1, 0, 0, 1, 0, 0];
-      onViewportChange({
-        zoom: viewportTransform[0] ?? 1,
-        panX: viewportTransform[4] ?? 0,
-        panY: viewportTransform[5] ?? 0
-      });
+      if (drawSessionRef.current.isDrawing && selectedImageLayer) {
+        drawSessionRef.current.isDrawing = false;
+        onMaskFinish(selectedImageLayer.id);
+      }
     };
 
     runtime.on("selection:created", syncSelection);
@@ -204,7 +348,7 @@ export function CanvasViewport({
     runtime.on("object:modified", handleObjectModified);
     runtime.on("mouse:down", handleMouseDown);
     runtime.on("mouse:move", handleMouseMove);
-    runtime.on("mouse:up", stopPan);
+    runtime.on("mouse:up", stopInteraction);
 
     return () => {
       runtime.off("selection:created", syncSelection);
@@ -213,11 +357,24 @@ export function CanvasViewport({
       runtime.off("object:modified", handleObjectModified);
       runtime.off("mouse:down", handleMouseDown);
       runtime.off("mouse:move", handleMouseMove);
-      runtime.off("mouse:up", stopPan);
+      runtime.off("mouse:up", stopInteraction);
       runtime.dispose();
       runtimeRef.current = null;
     };
-  }, [activeTool, document.canvas.backgroundColor, document.canvas.height, document.canvas.viewport.panX, document.canvas.viewport.panY, document.canvas.viewport.zoom, document.canvas.width, onSelectionChange, onTransformChange, onViewportChange]);
+  }, [
+    activeTool,
+    document.canvas.backgroundColor,
+    document.canvas.height,
+    document.canvas.viewport,
+    document.canvas.width,
+    onMaskAppend,
+    onMaskFinish,
+    onMaskStart,
+    onSelectionChange,
+    onTransformChange,
+    onViewportChange,
+    selectedImageLayer
+  ]);
 
   useEffect(() => {
     const runtime = runtimeRef.current;
@@ -226,11 +383,21 @@ export function CanvasViewport({
       return;
     }
 
-    runtime.selection = activeTool !== "hand";
-    runtime.defaultCursor = activeTool === "hand" ? "grab" : "default";
-    runtime.hoverCursor = activeTool === "hand" ? "grab" : "move";
+    const isDirectManipulationTool =
+      activeTool === "hand" || activeTool === "brush" || activeTool === "eraser";
 
-    if (activeTool === "hand") {
+    runtime.selection = !isDirectManipulationTool;
+    runtime.defaultCursor =
+      activeTool === "hand"
+        ? "grab"
+        : activeTool === "brush"
+          ? "crosshair"
+          : activeTool === "eraser"
+            ? "cell"
+            : "default";
+    runtime.hoverCursor = runtime.defaultCursor;
+
+    if (isDirectManipulationTool) {
       runtime.discardActiveObject();
       runtime.requestRenderAll();
     }
@@ -281,30 +448,52 @@ export function CanvasViewport({
       cancelled = true;
       suppressSyncRef.current = false;
     };
-  }, [
-    document.updatedAt,
-    document.canvas.width,
-    document.canvas.height,
-    document.canvas.backgroundColor,
-    document.canvas.safeAreaInset,
-    document.canvas.viewport.zoom,
-    document.canvas.viewport.panX,
-    document.canvas.viewport.panY,
-    selectedLayerIds
-  ]);
+  }, [document, selectedLayerIds]);
+
+  useEffect(() => {
+    const overlay = overlayRef.current;
+
+    if (!overlay || !selectedImageLayer) {
+      if (overlay) {
+        const context = overlay.getContext("2d");
+        context?.clearRect(0, 0, overlay.width, overlay.height);
+      }
+      return;
+    }
+
+    const context = overlay.getContext("2d");
+
+    if (!context) {
+      return;
+    }
+
+    drawMaskOverlay(context, selectedImageLayer, document.canvas.viewport);
+  }, [document.canvas.viewport, selectedImageLayer]);
 
   return (
     <div className="workspace__viewport-shell">
       <div className="workspace__viewport-inner">
         <div className="workspace__viewport-board">
-          <canvas
-            ref={canvasRef}
-            className={`workspace__canvas ${
-              activeTool === "hand" ? "workspace__canvas--hand" : ""
-            }`}
-            height={document.canvas.height}
-            width={document.canvas.width}
-          />
+          <div className="workspace__canvas-stack">
+            <canvas
+              ref={canvasRef}
+              className={`workspace__canvas ${
+                activeTool === "hand" ? "workspace__canvas--hand" : ""
+              }`}
+              height={document.canvas.height}
+              width={document.canvas.width}
+            />
+            <canvas
+              ref={overlayRef}
+              className={`workspace__mask-overlay ${
+                activeTool === "brush" || activeTool === "eraser"
+                  ? "workspace__mask-overlay--interactive"
+                  : ""
+              }`}
+              height={document.canvas.height}
+              width={document.canvas.width}
+            />
+          </div>
         </div>
       </div>
     </div>

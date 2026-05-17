@@ -1,0 +1,19 @@
+<svg width="1200" height="720" viewBox="0 0 1200 720" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="720" rx="32" fill="#F8F3EB"/>
+  <rect x="36" y="36" width="1128" height="648" rx="28" fill="#FFF9F1" stroke="#DCCDBA"/>
+  <rect x="72" y="96" width="240" height="540" rx="22" fill="#F3E7D9" stroke="#D7C2AE"/>
+  <rect x="340" y="96" width="520" height="540" rx="22" fill="#E8DECE" stroke="#D7C2AE"/>
+  <rect x="888" y="96" width="240" height="540" rx="22" fill="#F3E7D9" stroke="#D7C2AE"/>
+  <rect x="402" y="154" width="396" height="420" rx="24" fill="#FFFDF7" stroke="#C8B8A4" stroke-dasharray="10 10"/>
+  <rect x="448" y="214" width="304" height="120" rx="18" fill="#FFD073"/>
+  <rect x="474" y="238" width="248" height="20" rx="10" fill="#1C2520" fill-opacity="0.8"/>
+  <rect x="474" y="270" width="198" height="16" rx="8" fill="#1C2520" fill-opacity="0.45"/>
+  <rect x="468" y="382" width="140" height="56" rx="16" fill="#CD5C2D"/>
+  <rect x="634" y="382" width="118" height="56" rx="16" fill="#9AE5C4"/>
+  <text x="112" y="144" fill="#1C2520" font-size="28" font-family="Arial, PingFang SC">左侧：任务入口</text>
+  <text x="112" y="184" fill="#59675F" font-size="20" font-family="Arial, PingFang SC">选择 / 平移 / 裁剪 / 涂抹 / 花字</text>
+  <text x="420" y="144" fill="#1C2520" font-size="28" font-family="Arial, PingFang SC">中间：画布工作区</text>
+  <text x="420" y="184" fill="#59675F" font-size="20" font-family="Arial, PingFang SC">预览构图、拖拽图层、检查 AI 修复结果</text>
+  <text x="924" y="144" fill="#1C2520" font-size="28" font-family="Arial, PingFang SC">右侧：属性面板</text>
+  <text x="924" y="184" fill="#59675F" font-size="20" font-family="Arial, PingFang SC">比例、裁剪、滤镜、AI 扩图、导出</text>
+</svg>

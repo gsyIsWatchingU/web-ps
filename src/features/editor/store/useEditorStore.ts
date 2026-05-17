@@ -1,10 +1,13 @@
 import { create } from "zustand";
 import {
+  createDefaultImageAiMeta,
   createDefaultImageFilters,
+  createDefaultImageMask,
   createDefaultTextStyle,
   createImageCrop,
   createInitialDocument,
   createLayerId,
+  createStrokeId,
   getCanvasPreset,
   getEnhanceProfile,
   getImageFilterPreset,
@@ -15,29 +18,29 @@ import {
   type DecorationLayer,
   type EditorDocument,
   type EditorLayer,
+  type EditorTool,
   type EnhanceProfileId,
   type ImageCrop,
   type ImageLayer,
   type ImagePresetFilterId,
   type LayerTransform,
+  type MaskPoint,
   type TextLayer,
   type TextTemplateId
 } from "../model/document";
 import { editorDocumentSchema } from "../model/document.schema";
-
-export type EditorTool =
-  | "select"
-  | "hand"
-  | "crop"
-  | "text"
-  | "shape"
-  | "filter";
+import { inpaintImage, outpaintImage } from "../runtime/aiBridge";
 
 type LayerOrderDirection = "up" | "down";
 type AlignmentAxis = "horizontal" | "vertical";
 type HistoryEntry = {
   document: EditorDocument;
   selectedLayerIds: string[];
+};
+
+type AsyncResult = {
+  success: boolean;
+  errorMessage: string | null;
 };
 
 type EditorStore = {
@@ -68,14 +71,8 @@ type EditorStore = {
   centerLayer: (layerId: string, axis: AlignmentAxis) => void;
   updateLayerOpacity: (layerId: string, opacity: number) => void;
   updateTextContent: (layerId: string, content: string) => void;
-  updateTextStyle: (
-    layerId: string,
-    style: Partial<TextLayer["style"]>
-  ) => void;
-  updateImageFilters: (
-    layerId: string,
-    filters: Partial<ImageLayer["filters"]>
-  ) => void;
+  updateTextStyle: (layerId: string, style: Partial<TextLayer["style"]>) => void;
+  updateImageFilters: (layerId: string, filters: Partial<ImageLayer["filters"]>) => void;
   applyImagePreset: (layerId: string, presetId: ImagePresetFilterId) => void;
   applyEnhanceProfile: (layerId: string, profileId: EnhanceProfileId) => void;
   resetImageAdjustments: (layerId: string) => void;
@@ -86,6 +83,21 @@ type EditorStore = {
   updateDecorationFill: (layerId: string, fill: string) => void;
   updateExportConfig: (config: Partial<EditorDocument["exportConfig"]>) => void;
   recordWorkflowExport: () => void;
+  markWorkflowApplied: () => void;
+  updateAiPrompt: (layerId: string, prompt: string) => void;
+  updateAiExpandPrompt: (layerId: string, prompt: string) => void;
+  updateMaskBrushSize: (layerId: string, size: number) => void;
+  toggleMaskPreview: (layerId: string) => void;
+  clearMask: (layerId: string) => void;
+  startMaskStroke: (
+    layerId: string,
+    mode: "paint" | "erase",
+    point: MaskPoint
+  ) => void;
+  appendMaskPoint: (layerId: string, point: MaskPoint) => void;
+  finishMaskStroke: (layerId: string) => void;
+  applyAiRepair: (layerId: string) => Promise<AsyncResult>;
+  applyAiExtend: (layerId: string, presetId: CanvasPresetId) => Promise<AsyncResult>;
   undo: () => void;
   redo: () => void;
 };
@@ -190,6 +202,25 @@ function loadImageAsset(file: File) {
 
     reader.readAsDataURL(file);
   });
+}
+
+function loadImageElement(source: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("无法加载图片资源。"));
+    image.src = source;
+  });
+}
+
+async function getImageSize(source: string) {
+  const image = await loadImageElement(source);
+
+  return {
+    width: image.naturalWidth || image.width,
+    height: image.naturalHeight || image.height
+  };
 }
 
 function loadInitialDocument() {
@@ -320,7 +351,138 @@ function getLayerSize(layer: EditorLayer) {
   };
 }
 
-export const useEditorStore = create<EditorStore>((set) => ({
+function layerSupportsAi(layer: ImageLayer) {
+  return (
+    layer.transform.rotation === 0 &&
+    !layer.transform.flipX &&
+    !layer.transform.flipY
+  );
+}
+
+async function renderLayerCropDataUrl(layer: ImageLayer) {
+  if (layer.source === "pending-upload") {
+    throw new Error("请先导入图片后再执行 AI 操作。");
+  }
+
+  const image = await loadImageElement(layer.source);
+  const canvas = window.document.createElement("canvas");
+
+  canvas.width = layer.crop.width;
+  canvas.height = layer.crop.height;
+
+  const context = canvas.getContext("2d");
+
+  if (!context) {
+    throw new Error("无法创建图像画布。");
+  }
+
+  context.drawImage(
+    image,
+    layer.crop.x,
+    layer.crop.y,
+    layer.crop.width,
+    layer.crop.height,
+    0,
+    0,
+    layer.crop.width,
+    layer.crop.height
+  );
+
+  return canvas.toDataURL("image/png");
+}
+
+function renderMaskDataUrl(layer: ImageLayer) {
+  const canvas = window.document.createElement("canvas");
+  canvas.width = layer.crop.width;
+  canvas.height = layer.crop.height;
+
+  const context = canvas.getContext("2d");
+
+  if (!context) {
+    throw new Error("无法创建蒙版画布。");
+  }
+
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.lineCap = "round";
+  context.lineJoin = "round";
+
+  for (const stroke of layer.mask.strokes) {
+    if (stroke.points.length === 0) {
+      continue;
+    }
+
+    context.save();
+    context.globalCompositeOperation =
+      stroke.mode === "paint" ? "destination-out" : "source-over";
+    context.strokeStyle = "#ffffff";
+    context.lineWidth = stroke.size;
+
+    context.beginPath();
+    stroke.points.forEach((point, index) => {
+      const x = point.x * canvas.width;
+      const y = point.y * canvas.height;
+
+      if (index === 0) {
+        context.moveTo(x, y);
+      } else {
+        context.lineTo(x, y);
+      }
+    });
+    context.stroke();
+    context.restore();
+  }
+
+  return canvas.toDataURL("image/png");
+}
+
+async function createOutpaintPayload(layer: ImageLayer, targetRatio: number) {
+  const sourceImage = await loadImageElement(await renderLayerCropDataUrl(layer));
+  const currentWidth = layer.crop.width;
+  const currentHeight = layer.crop.height;
+  const currentRatio = currentWidth / currentHeight;
+
+  let targetWidth = currentWidth;
+  let targetHeight = currentHeight;
+
+  if (currentRatio > targetRatio) {
+    targetHeight = Math.round(currentWidth / targetRatio);
+  } else {
+    targetWidth = Math.round(currentHeight * targetRatio);
+  }
+
+  const sourceCanvas = window.document.createElement("canvas");
+  sourceCanvas.width = targetWidth;
+  sourceCanvas.height = targetHeight;
+  const sourceContext = sourceCanvas.getContext("2d");
+
+  const maskCanvas = window.document.createElement("canvas");
+  maskCanvas.width = targetWidth;
+  maskCanvas.height = targetHeight;
+  const maskContext = maskCanvas.getContext("2d");
+
+  if (!sourceContext || !maskContext) {
+    throw new Error("无法创建扩图画布。");
+  }
+
+  const offsetX = Math.round((targetWidth - currentWidth) / 2);
+  const offsetY = Math.round((targetHeight - currentHeight) / 2);
+
+  sourceContext.clearRect(0, 0, targetWidth, targetHeight);
+  sourceContext.drawImage(sourceImage, offsetX, offsetY, currentWidth, currentHeight);
+
+  maskContext.fillStyle = "#ffffff";
+  maskContext.fillRect(0, 0, targetWidth, targetHeight);
+  maskContext.clearRect(offsetX, offsetY, currentWidth, currentHeight);
+
+  return {
+    sourceDataUrl: sourceCanvas.toDataURL("image/png"),
+    maskDataUrl: maskCanvas.toDataURL("image/png"),
+    size: `${targetWidth}x${targetHeight}` as `${number}x${number}`
+  };
+}
+
+export const useEditorStore = create<EditorStore>((set, get) => ({
   activeTool: "select",
   selectedLayerIds: [initialDocument.layers[1]?.id ?? initialDocument.layers[0].id],
   document: initialDocument,
@@ -404,10 +566,8 @@ export const useEditorStore = create<EditorStore>((set) => ({
         presetFilterId: null,
         enhanceProfileId: null,
         filters: createDefaultImageFilters(),
-        mask: {
-          hasMaskPreview: false,
-          strokes: 0
-        }
+        mask: createDefaultImageMask(),
+        aiMeta: createDefaultImageAiMeta()
       };
       const normalized = normalizeLayerOrder([...state.document.layers, nextLayer]);
 
@@ -804,16 +964,8 @@ export const useEditorStore = create<EditorStore>((set) => ({
               1,
               layer.originalHeight - nextCrop.y
             );
-            const x = clamp(
-              Math.round(nextCrop.x),
-              0,
-              layer.originalWidth - width
-            );
-            const y = clamp(
-              Math.round(nextCrop.y),
-              0,
-              layer.originalHeight - height
-            );
+            const x = clamp(Math.round(nextCrop.x), 0, layer.originalWidth - width);
+            const y = clamp(Math.round(nextCrop.y), 0, layer.originalHeight - height);
 
             return {
               ...layer,
@@ -914,6 +1066,443 @@ export const useEditorStore = create<EditorStore>((set) => ({
         }
       }
     })),
+  markWorkflowApplied: () =>
+    set((state) => ({
+      document: {
+        ...state.document,
+        workflowMeta: {
+          ...state.document.workflowMeta,
+          lastAppliedAt: new Date().toISOString()
+        }
+      }
+    })),
+  updateAiPrompt: (layerId, prompt) =>
+    set((state) =>
+      commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "image"
+              ? {
+                  ...layer,
+                  aiMeta: {
+                    ...layer.aiMeta,
+                    prompt
+                  }
+                }
+              : layer
+          )
+        )
+      )
+    ),
+  updateAiExpandPrompt: (layerId, prompt) =>
+    set((state) =>
+      commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "image"
+              ? {
+                  ...layer,
+                  aiMeta: {
+                    ...layer.aiMeta,
+                    expandPrompt: prompt
+                  }
+                }
+              : layer
+          )
+        )
+      )
+    ),
+  updateMaskBrushSize: (layerId, size) =>
+    set((state) =>
+      commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "image"
+              ? {
+                  ...layer,
+                  mask: {
+                    ...layer.mask,
+                    brushSize: clamp(size, 8, 160)
+                  }
+                }
+              : layer
+          )
+        )
+      )
+    ),
+  toggleMaskPreview: (layerId) =>
+    set((state) =>
+      commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "image"
+              ? {
+                  ...layer,
+                  mask: {
+                    ...layer.mask,
+                    showPreview: !layer.mask.showPreview
+                  }
+                }
+              : layer
+          )
+        )
+      )
+    ),
+  clearMask: (layerId) =>
+    set((state) =>
+      commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "image"
+              ? {
+                  ...layer,
+                  mask: createDefaultImageMask()
+                }
+              : layer
+          )
+        )
+      )
+    ),
+  startMaskStroke: (layerId, mode, point) =>
+    set((state) => ({
+      document: updateLayers(state.document, (layers) =>
+        layers.map((layer) =>
+          layer.id === layerId && layer.type === "image"
+            ? (() => {
+                const strokeId = createStrokeId();
+
+                return {
+                  ...layer,
+                  mask: {
+                    ...layer.mask,
+                    activeStrokeId: strokeId,
+                    strokes: [
+                      ...layer.mask.strokes,
+                      {
+                        id: strokeId,
+                        mode,
+                        size: layer.mask.brushSize,
+                        points: [point]
+                      }
+                    ]
+                  }
+                };
+              })()
+            : layer
+        )
+      )
+    })),
+  appendMaskPoint: (layerId, point) =>
+    set((state) => ({
+      document: updateLayers(state.document, (layers) =>
+        layers.map((layer) => {
+          if (layer.id !== layerId || layer.type !== "image") {
+            return layer;
+          }
+
+          const activeStroke = layer.mask.strokes.at(-1);
+
+          if (!activeStroke) {
+            return layer;
+          }
+
+          return {
+            ...layer,
+            mask: {
+              ...layer.mask,
+              strokes: [
+                ...layer.mask.strokes.slice(0, -1),
+                {
+                  ...activeStroke,
+                  points: [...activeStroke.points, point]
+                }
+              ]
+            }
+          };
+        })
+      )
+    })),
+  finishMaskStroke: (layerId) =>
+    set((state) => ({
+      document: updateLayers(state.document, (layers) =>
+        layers.map((layer) =>
+          layer.id === layerId && layer.type === "image"
+            ? {
+                ...layer,
+                mask: {
+                  ...layer.mask,
+                  activeStrokeId: null
+                }
+              }
+            : layer
+        )
+      )
+    })),
+  applyAiRepair: async (layerId) => {
+    const state = get();
+    const layer = state.document.layers.find(
+      (entry): entry is ImageLayer => entry.id === layerId && entry.type === "image"
+    );
+
+    if (!layer) {
+      return { success: false, errorMessage: "请选择一个图片层。" };
+    }
+
+    if (!layerSupportsAi(layer)) {
+      return {
+        success: false,
+        errorMessage: "AI 修复暂不支持已旋转或翻转的图片，请先恢复为正向图片。"
+      };
+    }
+
+    if (!layer.mask.strokes.some((stroke) => stroke.mode === "paint" && stroke.points.length > 1)) {
+      return {
+        success: false,
+        errorMessage: "请先涂抹需要修复的区域。"
+      };
+    }
+
+    set((current) => ({
+      document: updateLayers(current.document, (layers) =>
+        layers.map((entry) =>
+          entry.id === layerId && entry.type === "image"
+            ? {
+                ...entry,
+                aiMeta: {
+                  ...entry.aiMeta,
+                  lastAiAction: "inpaint",
+                  lastAiRequestedAt: new Date().toISOString(),
+                  lastAiError: null
+                }
+              }
+            : entry
+        )
+      )
+    }));
+
+    try {
+      const sourceDataUrl = await renderLayerCropDataUrl(layer);
+      const maskDataUrl = renderMaskDataUrl(layer);
+      const result = await inpaintImage({
+        sourceDataUrl,
+        maskDataUrl,
+        prompt: layer.aiMeta.prompt,
+        size: `${layer.crop.width}x${layer.crop.height}`
+      });
+
+      if (!result.success || !result.imageDataUrl) {
+        set((current) => ({
+          document: updateLayers(current.document, (layers) =>
+            layers.map((entry) =>
+              entry.id === layerId && entry.type === "image"
+                ? {
+                    ...entry,
+                    aiMeta: {
+                      ...entry.aiMeta,
+                      lastAiError: result.errorMessage
+                    }
+                  }
+                : entry
+            )
+          )
+        }));
+
+        return result;
+      }
+
+      const imageDataUrl = result.imageDataUrl;
+      const size = await getImageSize(imageDataUrl);
+
+      set((current) =>
+        commitDocumentChange(
+          current,
+          updateLayers(current.document, (layers) =>
+            layers.map((entry) =>
+              entry.id === layerId && entry.type === "image"
+                ? {
+                    ...entry,
+                    source: imageDataUrl,
+                    originalWidth: size.width,
+                    originalHeight: size.height,
+                    crop: createImageCrop(size.width, size.height),
+                    mask: createDefaultImageMask(),
+                    aiMeta: {
+                      ...entry.aiMeta,
+                      lastAiAction: "inpaint",
+                      lastAiSucceededAt: new Date().toISOString(),
+                      lastAiError: null
+                    }
+                  }
+                : entry
+            )
+          )
+        )
+      );
+
+      return { success: true, errorMessage: null };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "AI 修复失败。";
+
+      set((current) => ({
+        document: updateLayers(current.document, (layers) =>
+          layers.map((entry) =>
+            entry.id === layerId && entry.type === "image"
+              ? {
+                  ...entry,
+                  aiMeta: {
+                    ...entry.aiMeta,
+                    lastAiError: message
+                  }
+                }
+              : entry
+          )
+        )
+      }));
+
+      return { success: false, errorMessage: message };
+    }
+  },
+  applyAiExtend: async (layerId, presetId) => {
+    const state = get();
+    const layer = state.document.layers.find(
+      (entry): entry is ImageLayer => entry.id === layerId && entry.type === "image"
+    );
+
+    if (!layer) {
+      return { success: false, errorMessage: "请选择一个图片层。" };
+    }
+
+    if (!layerSupportsAi(layer)) {
+      return {
+        success: false,
+        errorMessage: "AI 扩图暂不支持已旋转或翻转的图片，请先恢复为正向图片。"
+      };
+    }
+
+    const preset = getCanvasPreset(presetId);
+    const targetRatio = preset.width / preset.height;
+
+    set((current) => ({
+      document: updateLayers(current.document, (layers) =>
+        layers.map((entry) =>
+          entry.id === layerId && entry.type === "image"
+            ? {
+                ...entry,
+                aiMeta: {
+                  ...entry.aiMeta,
+                  lastAiAction: "outpaint",
+                  lastAiRequestedAt: new Date().toISOString(),
+                  lastAiError: null
+                }
+              }
+            : entry
+        )
+      )
+    }));
+
+    try {
+      const payload = await createOutpaintPayload(layer, targetRatio);
+      const result = await outpaintImage({
+        sourceDataUrl: payload.sourceDataUrl,
+        maskDataUrl: payload.maskDataUrl,
+        prompt: layer.aiMeta.expandPrompt,
+        size: payload.size
+      });
+
+      if (!result.success || !result.imageDataUrl) {
+        set((current) => ({
+          document: updateLayers(current.document, (layers) =>
+            layers.map((entry) =>
+              entry.id === layerId && entry.type === "image"
+                ? {
+                    ...entry,
+                    aiMeta: {
+                      ...entry.aiMeta,
+                      lastAiError: result.errorMessage
+                    }
+                  }
+                : entry
+            )
+          )
+        }));
+
+        return result;
+      }
+
+      const imageDataUrl = result.imageDataUrl;
+      const size = await getImageSize(imageDataUrl);
+
+      set((current) =>
+        commitDocumentChange(
+          current,
+          touchDocument({
+            ...current.document,
+            canvas: {
+              ...current.document.canvas,
+              presetId: preset.id,
+              width: preset.width,
+              height: preset.height
+            },
+            workflowMeta: {
+              ...current.document.workflowMeta,
+              sceneTag: preset.scene
+            },
+            layers: current.document.layers.map((entry) =>
+              entry.id === layerId && entry.type === "image"
+                ? {
+                    ...entry,
+                    source: imageDataUrl,
+                    originalWidth: size.width,
+                    originalHeight: size.height,
+                    crop: createImageCrop(size.width, size.height),
+                    mask: createDefaultImageMask(),
+                    aiMeta: {
+                      ...entry.aiMeta,
+                      lastAiAction: "outpaint",
+                      lastAiSucceededAt: new Date().toISOString(),
+                      lastAiError: null
+                    },
+                    transform: buildImageTransform(
+                      preset.width,
+                      preset.height,
+                      size.width,
+                      size.height
+                    )
+                  }
+                : entry
+            )
+          })
+        )
+      );
+
+      return { success: true, errorMessage: null };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "AI 扩图失败。";
+
+      set((current) => ({
+        document: updateLayers(current.document, (layers) =>
+          layers.map((entry) =>
+            entry.id === layerId && entry.type === "image"
+              ? {
+                  ...entry,
+                  aiMeta: {
+                    ...entry.aiMeta,
+                    lastAiError: message
+                  }
+                }
+              : entry
+          )
+        )
+      }));
+
+      return { success: false, errorMessage: message };
+    }
+  },
   undo: () =>
     set((state) => {
       const previous = state.historyPast.at(-1);

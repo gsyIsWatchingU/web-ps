@@ -75,8 +75,30 @@ const imageLayerSchema = layerBaseSchema.extend({
     temperature: z.number()
   }),
   mask: z.object({
-    hasMaskPreview: z.boolean(),
-    strokes: z.number().int().nonnegative()
+    showPreview: z.boolean(),
+    brushSize: z.number().positive(),
+    activeStrokeId: z.string().nullable(),
+    strokes: z.array(
+      z.object({
+        id: z.string(),
+        mode: z.enum(["paint", "erase"]),
+        size: z.number().positive(),
+        points: z.array(
+          z.object({
+            x: z.number().min(0).max(1),
+            y: z.number().min(0).max(1)
+          })
+        )
+      })
+    )
+  }),
+  aiMeta: z.object({
+    prompt: z.string(),
+    expandPrompt: z.string(),
+    lastAiAction: z.enum(["inpaint", "outpaint"]).nullable(),
+    lastAiRequestedAt: z.string().nullable(),
+    lastAiSucceededAt: z.string().nullable(),
+    lastAiError: z.string().nullable()
   })
 });
 
@@ -138,7 +160,11 @@ export const editorDocumentSchema = z.object({
   workflowMeta: z.object({
     sceneTag: z.string(),
     version: z.number().int().positive(),
-    lastExportedAt: z.string().nullable()
+    lastExportedAt: z.string().nullable(),
+    lastAppliedAt: z.string().nullable(),
+    returnMode: z.literal("postmessage"),
+    targetOrigin: z.string(),
+    sessionId: z.string().nullable()
   }),
   updatedAt: z.string()
 });

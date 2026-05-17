@@ -17,7 +17,7 @@ function downloadDataUrl(dataUrl: string, filename: string) {
   link.click();
 }
 
-export async function exportDocument(document: EditorDocument) {
+export async function renderDocumentDataUrl(document: EditorDocument) {
   const canvasElement = window.document.createElement("canvas");
   const runtime = new Canvas(canvasElement, {
     width: document.canvas.width,
@@ -31,19 +31,24 @@ export async function exportDocument(document: EditorDocument) {
     await seedCanvas(runtime, document, [], { showSafeArea: false });
     runtime.setViewportTransform([1, 0, 0, 1, 0, 0]);
 
-    const dataUrl = runtime.toDataURL({
+    return runtime.toDataURL({
       format: document.exportConfig.format,
       quality: document.exportConfig.quality,
       multiplier: document.exportConfig.scale
     });
-    const filename = buildExportFilename(document);
-
-    downloadDataUrl(dataUrl, filename);
-
-    return {
-      filename
-    };
   } finally {
     runtime.dispose();
   }
+}
+
+export async function exportDocument(document: EditorDocument) {
+  const dataUrl = await renderDocumentDataUrl(document);
+  const filename = buildExportFilename(document);
+
+  downloadDataUrl(dataUrl, filename);
+
+  return {
+    filename,
+    dataUrl
+  };
 }

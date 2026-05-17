@@ -11,28 +11,28 @@ export const canvasPresets = [
     label: "3:4",
     width: 900,
     height: 1200,
-    scene: "详情页海报"
+    scene: "信息流海报"
   },
   {
     id: "4:5",
     label: "4:5",
     width: 1080,
     height: 1350,
-    scene: "信息流投放"
+    scene: "商城推荐图"
   },
   {
     id: "9:16",
     label: "9:16",
     width: 1080,
     height: 1920,
-    scene: "竖版短视频封面"
+    scene: "竖版封面"
   },
   {
     id: "custom",
     label: "自定义",
     width: 1200,
     height: 1500,
-    scene: "特殊渠道尺寸"
+    scene: "自定义投放位"
   }
 ] as const;
 
@@ -40,12 +40,24 @@ export const layerTypes = ["image", "text", "decoration"] as const;
 export const textTemplateIds = ["title", "price", "coupon", "highlight"] as const;
 export const imagePresetFilterIds = ["beauty", "food", "fashion", "home"] as const;
 export const enhanceProfileIds = ["auto"] as const;
+export const editorToolIds = [
+  "select",
+  "hand",
+  "crop",
+  "brush",
+  "eraser",
+  "repair",
+  "text",
+  "filter",
+  "shape"
+] as const;
 
 export type CanvasPresetId = (typeof canvasPresets)[number]["id"];
 export type LayerType = (typeof layerTypes)[number];
 export type TextTemplateId = (typeof textTemplateIds)[number];
 export type ImagePresetFilterId = (typeof imagePresetFilterIds)[number];
 export type EnhanceProfileId = (typeof enhanceProfileIds)[number];
+export type EditorTool = (typeof editorToolIds)[number];
 
 export type LayerTransform = {
   x: number;
@@ -84,6 +96,34 @@ export type ImageFilters = {
   temperature: number;
 };
 
+export type MaskPoint = {
+  x: number;
+  y: number;
+};
+
+export type MaskStroke = {
+  id: string;
+  mode: "paint" | "erase";
+  size: number;
+  points: MaskPoint[];
+};
+
+export type ImageMask = {
+  showPreview: boolean;
+  brushSize: number;
+  strokes: MaskStroke[];
+  activeStrokeId: string | null;
+};
+
+export type ImageAiMeta = {
+  prompt: string;
+  expandPrompt: string;
+  lastAiAction: "inpaint" | "outpaint" | null;
+  lastAiRequestedAt: string | null;
+  lastAiSucceededAt: string | null;
+  lastAiError: string | null;
+};
+
 export type ImageLayer = LayerBase & {
   type: "image";
   source: string;
@@ -93,10 +133,8 @@ export type ImageLayer = LayerBase & {
   presetFilterId: ImagePresetFilterId | null;
   enhanceProfileId: EnhanceProfileId | null;
   filters: ImageFilters;
-  mask: {
-    hasMaskPreview: boolean;
-    strokes: number;
-  };
+  mask: ImageMask;
+  aiMeta: ImageAiMeta;
 };
 
 export type TextLayer = LayerBase & {
@@ -155,6 +193,10 @@ export type WorkflowMeta = {
   sceneTag: string;
   version: number;
   lastExportedAt: string | null;
+  lastAppliedAt: string | null;
+  returnMode: "postmessage";
+  targetOrigin: string;
+  sessionId: string | null;
 };
 
 export type EditorDocument = {
@@ -170,7 +212,7 @@ export type EditorDocument = {
 
 export const layerTypeLabels: Record<LayerType, string> = {
   image: "图片层",
-  text: "文字层",
+  text: "花字层",
   decoration: "装饰层"
 };
 
@@ -184,7 +226,7 @@ export const textTemplatePresets: Array<{
   {
     id: "title",
     label: "主标题花字",
-    content: "爆款新品上新",
+    content: "爆款卖点一眼看见",
     name: "主标题花字",
     style: {
       fontSize: 88,
@@ -199,7 +241,7 @@ export const textTemplatePresets: Array<{
   {
     id: "price",
     label: "价格角标",
-    content: "到手价 ¥59",
+    content: "到手价 59",
     name: "价格角标",
     style: {
       fontSize: 72,
@@ -229,7 +271,7 @@ export const textTemplatePresets: Array<{
   {
     id: "highlight",
     label: "卖点高亮条",
-    content: "加购立享赠品",
+    content: "限时加赠 热卖推荐",
     name: "卖点高亮条",
     style: {
       fontSize: 46,
@@ -251,8 +293,8 @@ export const imageFilterPresets: Array<{
 }> = [
   {
     id: "beauty",
-    label: "美妆清透",
-    description: "提亮肤色，压住杂色，适合护肤和彩妆商品图。",
+    label: "美妆通透",
+    description: "提亮肤感和产品高光，适合美妆护肤主图。",
     filters: {
       brightness: 0.08,
       contrast: 0.12,
@@ -264,8 +306,8 @@ export const imageFilterPresets: Array<{
   },
   {
     id: "food",
-    label: "食品食欲感",
-    description: "增强暖色和饱和度，让主图更有食欲感。",
+    label: "食品诱人",
+    description: "加强食物层次和暖色食欲感，适合零食与餐饮。",
     filters: {
       brightness: 0.06,
       contrast: 0.18,
@@ -278,7 +320,7 @@ export const imageFilterPresets: Array<{
   {
     id: "fashion",
     label: "服饰质感",
-    description: "强化布料层次和对比度，适合服饰穿搭图。",
+    description: "增强材质纹理与边缘锐度，适合服饰上新图。",
     filters: {
       brightness: 0.02,
       contrast: 0.16,
@@ -291,7 +333,7 @@ export const imageFilterPresets: Array<{
   {
     id: "home",
     label: "家居温润",
-    description: "轻微暖色提亮，保留家居场景的柔和氛围。",
+    description: "保持空间柔和感和清洁度，适合家居生活方式图。",
     filters: {
       brightness: 0.05,
       contrast: 0.08,
@@ -312,7 +354,7 @@ export const enhanceProfiles: Array<{
   {
     id: "auto",
     label: "一键增强",
-    description: "面向带货图的默认增强策略，优先拉开商品层次和清晰度。",
+    description: "自动提升主体清晰度、对比度和投放观感。",
     filters: {
       brightness: 0.07,
       contrast: 0.14,
@@ -329,7 +371,10 @@ export function getCanvasPreset(presetId: CanvasPresetId) {
 }
 
 export function getTextTemplatePreset(templateId: TextTemplateId) {
-  return textTemplatePresets.find((template) => template.id === templateId) ?? textTemplatePresets[0];
+  return (
+    textTemplatePresets.find((template) => template.id === templateId) ??
+    textTemplatePresets[0]
+  );
 }
 
 export function getImageFilterPreset(presetId: ImagePresetFilterId) {
@@ -342,6 +387,10 @@ export function getEnhanceProfile(profileId: EnhanceProfileId) {
 
 export function createLayerId(prefix: LayerType) {
   return `layer-${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function createStrokeId() {
+  return `stroke-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 export function normalizeLayerOrder<T extends EditorLayer>(layers: T[]) {
@@ -399,12 +448,32 @@ export function createImageCrop(width: number, height: number): ImageCrop {
   };
 }
 
+export function createDefaultImageMask(): ImageMask {
+  return {
+    showPreview: true,
+    brushSize: 36,
+    strokes: [],
+    activeStrokeId: null
+  };
+}
+
+export function createDefaultImageAiMeta(): ImageAiMeta {
+  return {
+    prompt: "保留主体和商品信息，修复蒙版区域中的瑕疵或杂物，让画面更干净适合电商投放。",
+    expandPrompt: "向外自然延展背景，保持主体、光感和风格一致，适配新的投放比例。",
+    lastAiAction: null,
+    lastAiRequestedAt: null,
+    lastAiSucceededAt: null,
+    lastAiError: null
+  };
+}
+
 export function createInitialDocument(): EditorDocument {
   const preset = getCanvasPreset("4:5");
 
   return {
     id: "doc-editor-mvp",
-    name: "AIGC 带货图精修台",
+    name: "AIGC 带货图精修",
     canvas: {
       presetId: preset.id,
       width: preset.width,
@@ -434,10 +503,8 @@ export function createInitialDocument(): EditorDocument {
         presetFilterId: null,
         enhanceProfileId: null,
         filters: createDefaultImageFilters(),
-        mask: {
-          hasMaskPreview: false,
-          strokes: 0
-        }
+        mask: createDefaultImageMask(),
+        aiMeta: createDefaultImageAiMeta()
       },
       {
         id: "layer-text-title",
@@ -456,14 +523,14 @@ export function createInitialDocument(): EditorDocument {
           flipX: false,
           flipY: false
         },
-        content: "夏季新品上新",
+        content: "新品卖点一眼看见",
         textTemplateId: "title",
         style: createDefaultTextStyle()
       },
       {
         id: "layer-decoration-badge",
         type: "decoration",
-        name: "卖点角标",
+        name: "价格角标",
         visible: true,
         locked: false,
         opacity: 1,
@@ -494,7 +561,11 @@ export function createInitialDocument(): EditorDocument {
     workflowMeta: {
       sceneTag: preset.scene,
       version: 1,
-      lastExportedAt: null
+      lastExportedAt: null,
+      lastAppliedAt: null,
+      returnMode: "postmessage",
+      targetOrigin: "*",
+      sessionId: null
     },
     updatedAt: new Date().toISOString()
   };
