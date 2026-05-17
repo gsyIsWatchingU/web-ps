@@ -1,23 +1,24 @@
 # Web 修图项目文档中心
 
-本目录是项目的 SDD 真相源，默认使用 `Spec-Driven Development` 推进需求、设计、任务和验收。目标不是增加流程负担，而是让每一次迭代都能沿着统一链路推进：`问题定义 -> 规格说明 -> 技术设计 -> 任务拆解 -> 实现 -> 验收 -> 决策沉淀`。
+本目录是项目的 SDD 文档源，默认使用 `Spec-Driven Development` 推进需求、设计、任务和验收。目标不是增加流程负担，而是让每一次迭代都沿着统一链路推进：`问题定义 -> 规格说明 -> 技术设计 -> 任务拆解 -> 实现 -> 验收 -> 决策沉淀`。
 
 ## 阅读顺序
 
 新成员或开始新迭代时，建议按以下顺序阅读：
 
 1. [产品愿景](./product/vision.md)
-2. [路线图](./product/roadmap.md)
-3. [MVP 审计](./product/mvp-audit.md)
-4. [编辑器领域模型](./domain/editor-model.md)
-5. [开发流程](./process/dev-workflow.md)
-6. 最近一个功能包下的 `spec.md / design.md / tasks.md`
-7. 相关 [ADR](./adr/)
+2. [产品使用手册](./product/user-manual.md)
+3. [路线图](./product/roadmap.md)
+4. [MVP 审计](./product/mvp-audit.md)
+5. [编辑器领域模型](./domain/editor-model.md)
+6. [开发流程](./process/dev-workflow.md)
+7. 最近一个功能包下的 `spec.md / design.md / tasks.md`
+8. 相关 [ADR](./adr/)
 
 ## 目录说明
 
 - `product/`
-  - 产品层文档，定义目标、阶段边界和版本演进。
+  - 产品层文档，定义目标、边界、路线图和用户使用方式。
 - `domain/`
   - 领域知识沉淀，统一术语和核心模型。
 - `specs/`
@@ -25,7 +26,7 @@
 - `adr/`
   - 长期有效的关键技术决策记录。
 - `process/`
-  - 研发流程、门禁规则和完成定义。
+  - 研发流程、规则和完成定义。
 - `templates/`
   - 创建新功能或新 ADR 时使用的模板。
 
@@ -39,9 +40,8 @@
 
 ## 当前起步文档
 
-当前仓库已建立首批基础文档：
-
 - [产品愿景](./product/vision.md)
+- [产品使用手册](./product/user-manual.md)
 - [路线图](./product/roadmap.md)
 - [MVP 审计](./product/mvp-audit.md)
 - [编辑器领域模型](./domain/editor-model.md)

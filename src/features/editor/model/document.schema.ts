@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { canvasPresets, layerTypes } from "./document";
+import {
+  canvasPresets,
+  enhanceProfileIds,
+  imagePresetFilterIds,
+  layerTypes,
+  textTemplateIds
+} from "./document";
 
 const presetIds = canvasPresets.map((preset) => preset.id) as [
   (typeof canvasPresets)[number]["id"],
@@ -9,6 +15,21 @@ const presetIds = canvasPresets.map((preset) => preset.id) as [
 const layerTypeValues = [...layerTypes] as [
   (typeof layerTypes)[number],
   ...(typeof layerTypes)[number][]
+];
+
+const textTemplateValues = [...textTemplateIds] as [
+  (typeof textTemplateIds)[number],
+  ...(typeof textTemplateIds)[number][]
+];
+
+const imagePresetValues = [...imagePresetFilterIds] as [
+  (typeof imagePresetFilterIds)[number],
+  ...(typeof imagePresetFilterIds)[number][]
+];
+
+const enhanceProfileValues = [...enhanceProfileIds] as [
+  (typeof enhanceProfileIds)[number],
+  ...(typeof enhanceProfileIds)[number][]
 ];
 
 const transformSchema = z.object({
@@ -37,7 +58,14 @@ const imageLayerSchema = layerBaseSchema.extend({
   source: z.string(),
   originalWidth: z.number().positive(),
   originalHeight: z.number().positive(),
-  cropHint: z.enum(["pending", "planned"]),
+  crop: z.object({
+    x: z.number().nonnegative(),
+    y: z.number().nonnegative(),
+    width: z.number().positive(),
+    height: z.number().positive()
+  }),
+  presetFilterId: z.enum(imagePresetValues).nullable(),
+  enhanceProfileId: z.enum(enhanceProfileValues).nullable(),
   filters: z.object({
     brightness: z.number(),
     contrast: z.number(),
@@ -45,12 +73,17 @@ const imageLayerSchema = layerBaseSchema.extend({
     blur: z.number(),
     sharpen: z.number(),
     temperature: z.number()
+  }),
+  mask: z.object({
+    hasMaskPreview: z.boolean(),
+    strokes: z.number().int().nonnegative()
   })
 });
 
 const textLayerSchema = layerBaseSchema.extend({
   type: z.literal("text"),
   content: z.string(),
+  textTemplateId: z.enum(textTemplateValues).nullable(),
   style: z.object({
     fontFamily: z.string(),
     fontSize: z.number(),
@@ -78,7 +111,12 @@ export const editorDocumentSchema = z.object({
     width: z.number().positive(),
     height: z.number().positive(),
     backgroundColor: z.string(),
-    safeAreaInset: z.number().nonnegative()
+    safeAreaInset: z.number().nonnegative(),
+    viewport: z.object({
+      zoom: z.number().positive(),
+      panX: z.number(),
+      panY: z.number()
+    })
   }),
   layers: z.array(
     z.discriminatedUnion("type", [
@@ -96,6 +134,11 @@ export const editorDocumentSchema = z.object({
     enabled: z.boolean(),
     storageKey: z.string(),
     lastSavedAt: z.string().nullable()
+  }),
+  workflowMeta: z.object({
+    sceneTag: z.string(),
+    version: z.number().int().positive(),
+    lastExportedAt: z.string().nullable()
   }),
   updatedAt: z.string()
 });

@@ -179,6 +179,12 @@ button {
   gap: 10px;
 }
 
+.workspace__tool-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .workspace__tool-button,
 .workspace__preset-button,
 .workspace__export-button,
@@ -216,6 +222,19 @@ button {
 .workspace__layer-button.is-active {
   background: var(--accent-soft);
   border-color: rgba(205, 92, 45, 0.4);
+}
+
+.workspace__tool-button--stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+}
+
+.workspace__tool-button--stack span {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
 }
 
 .workspace__tool-button--small {
@@ -348,13 +367,16 @@ button {
 
 .workspace__viewport-board {
   transform-origin: center center;
-  transition: transform 160ms ease;
 }
 
 .workspace__canvas {
   display: block;
   border-radius: 20px;
   box-shadow: var(--shadow-lg);
+}
+
+.workspace__canvas--hand {
+  cursor: grab;
 }
 
 .workspace__statusbar {
@@ -387,6 +409,10 @@ button {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.workspace__property-list--tight {
+  margin-top: 12px;
 }
 
 .workspace__property {

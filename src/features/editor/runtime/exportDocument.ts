@@ -4,7 +4,10 @@ import { seedCanvas } from "./seedCanvas";
 
 function buildExportFilename(document: EditorDocument) {
   const extension = document.exportConfig.format === "jpeg" ? "jpg" : "png";
-  return `${document.name || "web-ps-export"}.${extension}`;
+  const scene = document.canvas.presetId.replace(":", "x");
+  const version = `v${String(document.workflowMeta.version).padStart(3, "0")}`;
+
+  return `${document.name || "web-ps-export"}-${scene}-${version}.${extension}`;
 }
 
 function downloadDataUrl(dataUrl: string, filename: string) {
@@ -26,13 +29,20 @@ export async function exportDocument(document: EditorDocument) {
 
   try {
     await seedCanvas(runtime, document, [], { showSafeArea: false });
+    runtime.setViewportTransform([1, 0, 0, 1, 0, 0]);
+
     const dataUrl = runtime.toDataURL({
       format: document.exportConfig.format,
       quality: document.exportConfig.quality,
       multiplier: document.exportConfig.scale
     });
+    const filename = buildExportFilename(document);
 
-    downloadDataUrl(dataUrl, buildExportFilename(document));
+    downloadDataUrl(dataUrl, filename);
+
+    return {
+      filename
+    };
   } finally {
     runtime.dispose();
   }

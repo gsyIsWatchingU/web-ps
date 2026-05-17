@@ -73,8 +73,8 @@ function createSafeArea(document: EditorDocument) {
 }
 
 function createImagePlaceholder(layer: ImageLayer) {
-  const width = layer.originalWidth;
-  const height = layer.originalHeight;
+  const width = layer.crop.width;
+  const height = layer.crop.height;
   const panel = new Rect({
     left: 0,
     top: 0,
@@ -95,15 +95,18 @@ function createImagePlaceholder(layer: ImageLayer) {
     fontFamily: "Avenir Next",
     fontWeight: 700
   });
-  const desc = new Textbox("这里会显示你导入的商品图或海报初稿。当前层已经预留了裁切扩展位，后续可接局部编辑与滤镜。", {
-    left: 34,
-    top: 100,
-    width: Math.max(width - 68, 160),
-    fontSize: 20,
-    lineHeight: 1.5,
-    fill: "#5b6a61",
-    fontFamily: "Avenir Next"
-  });
+  const desc = new Textbox(
+    "这里会显示导入的商品图或海报初稿。当前版本已支持裁剪适配、电商滤镜预设和导出成品。",
+    {
+      left: 34,
+      top: 100,
+      width: Math.max(width - 68, 160),
+      fontSize: 20,
+      lineHeight: 1.5,
+      fill: "#5b6a61",
+      fontFamily: "Avenir Next"
+    }
+  );
 
   return new Group([panel, title, desc], {
     left: layer.transform.x,
@@ -203,8 +206,10 @@ async function createImageObject(layer: ImageLayer) {
   const image = await FabricImage.fromURL(layer.source);
 
   image.set({
-    width: layer.originalWidth,
-    height: layer.originalHeight
+    cropX: layer.crop.x,
+    cropY: layer.crop.y,
+    width: layer.crop.width,
+    height: layer.crop.height
   });
   applyImageFilters(image, layer);
 

@@ -1,21 +1,36 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   canvasPresets,
+  enhanceProfiles,
+  imageFilterPresets,
   layerTypeLabels,
+  textTemplatePresets,
   type DecorationLayer,
   type EditorLayer,
   type TextLayer
 } from "../model/document";
-import { useEditorStore } from "../store/useEditorStore";
 import { exportDocument } from "../runtime/exportDocument";
+import { useEditorStore } from "../store/useEditorStore";
 import { CanvasViewport } from "./CanvasViewport";
 
 const toolItems = [
-  { id: "select", label: "选择" },
-  { id: "text", label: "花字" },
-  { id: "shape", label: "图层" },
-  { id: "filter", label: "滤镜" }
+  { id: "select", label: "选择", hint: "选中并调整图层" },
+  { id: "hand", label: "平移", hint: "拖动画布视口" },
+  { id: "crop", label: "裁剪", hint: "适配投放比例" },
+  { id: "text", label: "花字", hint: "添加卖点文案" },
+  { id: "filter", label: "滤镜", hint: "统一商品质感" },
+  { id: "shape", label: "装饰", hint: "补卖点标签" }
 ] as const;
+
+const cropAspectOptions: Array<{
+  label: string;
+  value: number | null;
+}> = [
+  { label: "自由", value: null },
+  { label: "1:1", value: 1 },
+  { label: "4:5", value: 4 / 5 },
+  { label: "9:16", value: 9 / 16 }
+];
 
 function getSelectedImageLayer(layer: EditorLayer | undefined) {
   return layer?.type === "image" ? layer : null;
@@ -51,36 +66,46 @@ export function EditorWorkspace() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [lastAutoSavedAt, setLastAutoSavedAt] = useState<string | null>(null);
+  const [lastExportedFilename, setLastExportedFilename] = useState<string | null>(null);
   const {
     activeTool,
     addDecorationLayer,
     addTextLayer,
+    applyEnhanceProfile,
+    applyImagePreset,
+    applyTextTemplate,
+    centerLayer,
     document,
     duplicateLayer,
-    importImage,
     historyFuture,
     historyPast,
+    importImage,
     moveLayer,
-    removeLayer,
+    recordWorkflowExport,
     redo,
+    removeLayer,
+    resetImageAdjustments,
+    resetImageCrop,
     selectedLayerIds,
     selectLayer,
-    setSelectedLayerIds,
     setActiveTool,
     setCanvasPreset,
+    setCanvasViewport,
+    setImageCropAspect,
+    setSelectedLayerIds,
     toggleLayerLock,
     toggleLayerVisibility,
     undo,
     updateDecorationFill,
     updateDecorationShape,
     updateExportConfig,
+    updateImageCrop,
     updateImageFilters,
     updateLayerName,
-    updateTextContent,
-    updateTextStyle,
+    updateLayerOpacity,
     updateLayerTransform,
-    zoomPercent,
-    setZoomPercent
+    updateTextContent,
+    updateTextStyle
   } = useEditorStore();
 
   const selectedLayer = useMemo(
@@ -92,6 +117,7 @@ export function EditorWorkspace() {
   const selectedDecorationLayer = getSelectedDecorationLayer(selectedLayer);
   const canUndo = historyPast.length > 0;
   const canRedo = historyFuture.length > 0;
+  const viewport = document.canvas.viewport;
 
   useEffect(() => {
     setLastAutoSavedAt(document.draftMeta.lastSavedAt);
@@ -116,7 +142,9 @@ export function EditorWorkspace() {
     setIsExporting(true);
 
     try {
-      await exportDocument(document);
+      const result = await exportDocument(document);
+      recordWorkflowExport();
+      setLastExportedFilename(result.filename);
     } finally {
       setIsExporting(false);
     }
@@ -189,35 +217,36 @@ export function EditorWorkspace() {
     <div className="workspace">
       <aside className="workspace__column">
         <section className="workspace__section">
-          <h2>项目状态</h2>
+          <h2>本轮目标</h2>
           <div className="workspace__metrics">
             <div className="workspace__metric">
-              <span>当前阶段</span>
-              <strong>T1-T4 完成</strong>
+              <span>当前链路</span>
+              <strong>导入到导出</strong>
             </div>
             <div className="workspace__metric">
-              <span>图层数量</span>
-              <strong>{document.layers.length}</strong>
+              <span>可投放比例</span>
+              <strong>{document.canvas.presetId}</strong>
             </div>
           </div>
           <p className="workspace__hint">
-            当前版本已经具备画布比例切换、图片导入、基础变换和图层管理骨架，适合继续往花字、滤镜、历史栈和导出推进。
+            这版优先解决“AI 初稿不满意但还值得继续修”的高频场景：裁剪适配、花字包装、商品滤镜和稳定导出。
           </p>
         </section>
 
         <section className="workspace__section">
-          <h3>工具区</h3>
-          <div className="workspace__button-grid">
+          <h3>任务入口</h3>
+          <div className="workspace__tool-stack">
             {toolItems.map((tool) => (
               <button
                 key={tool.id}
-                className={`workspace__tool-button ${
+                className={`workspace__tool-button workspace__tool-button--stack ${
                   activeTool === tool.id ? "is-active" : ""
                 }`}
                 onClick={() => setActiveTool(tool.id)}
                 type="button"
               >
-                {tool.label}
+                <strong>{tool.label}</strong>
+                <span>{tool.hint}</span>
               </button>
             ))}
           </div>
@@ -330,7 +359,7 @@ export function EditorWorkspace() {
             <div>
               <h2>画布工作区</h2>
               <p className="workspace__meta">
-                当前比例 {document.canvas.presetId} · {document.canvas.width} ×{" "}
+                {document.workflowMeta.sceneTag} · {document.canvas.width} ×{" "}
                 {document.canvas.height}
               </p>
             </div>
@@ -359,7 +388,7 @@ export function EditorWorkspace() {
                 添加图片层
               </button>
               <button className="workspace__tool-button" onClick={addTextLayer} type="button">
-                添加花字层
+                快速加卖点花字
               </button>
               <button
                 className="workspace__export-button"
@@ -367,19 +396,18 @@ export function EditorWorkspace() {
                 onClick={() => void handleExport()}
                 type="button"
               >
-                {isExporting
-                  ? "导出中..."
-                  : `导出 ${document.exportConfig.format.toUpperCase()}`}
+                {isExporting ? "导出中..." : "导出投放成品"}
               </button>
             </div>
           </div>
 
           <CanvasViewport
+            activeTool={activeTool}
             document={document}
             onSelectionChange={setSelectedLayerIds}
             onTransformChange={updateLayerTransform}
+            onViewportChange={setCanvasViewport}
             selectedLayerIds={selectedLayerIds}
-            zoomPercent={zoomPercent}
           />
         </section>
 
@@ -390,21 +418,23 @@ export function EditorWorkspace() {
               草稿：
               {document.draftMeta.enabled
                 ? lastAutoSavedAt
-                  ? `已保存 ${new Date(lastAutoSavedAt).toLocaleTimeString(
-                      "zh-CN",
-                      {
-                        hour: "2-digit",
-                        minute: "2-digit"
-                      }
-                    )}`
+                  ? `已保存 ${new Date(lastAutoSavedAt).toLocaleTimeString("zh-CN", {
+                      hour: "2-digit",
+                      minute: "2-digit"
+                    })}`
                   : "已启用"
                 : "未启用"}
             </span>
-            <span>导出：{document.exportConfig.format.toUpperCase()}</span>
+            <span>
+              导出版本：v{String(document.workflowMeta.version).padStart(3, "0")}
+            </span>
           </div>
           <div className="workspace__status-group">
             <span>安全区：{document.canvas.safeAreaInset}px</span>
-            <span>Zoom：{zoomPercent}%</span>
+            <span>Zoom：{Math.round(viewport.zoom * 100)}%</span>
+            <span>
+              Pan：{Math.round(viewport.panX)} / {Math.round(viewport.panY)}
+            </span>
             <span>历史：{historyPast.length}/{historyFuture.length}</span>
           </div>
         </section>
@@ -412,8 +442,17 @@ export function EditorWorkspace() {
 
       <aside className="workspace__panel">
         <section className="workspace__section">
-          <h3>导出设置</h3>
+          <h3>导出与流程</h3>
           <div className="workspace__property-list">
+            <div className="workspace__property">
+              <div className="workspace__property-label">流程场景</div>
+              <div className="workspace__property-value">
+                {document.workflowMeta.sceneTag}
+              </div>
+              <p className="workspace__footer-note">
+                导出文件名会自动带上比例和版本号，方便回到图文流程继续使用。
+              </p>
+            </div>
             <label className="workspace__property">
               <span className="workspace__property-label">导出格式</span>
               <select
@@ -467,14 +506,16 @@ export function EditorWorkspace() {
                 {Math.round(document.exportConfig.quality * 100)}%
               </div>
             </label>
-            <p className="workspace__footer-note">
-              导出不会带安全区辅助线，PNG 适合高保真，JPEG 适合更轻量的投放素材。
-            </p>
+            {lastExportedFilename ? (
+              <p className="workspace__footer-note">
+                最近导出：{lastExportedFilename}
+              </p>
+            ) : null}
           </div>
         </section>
 
         <section className="workspace__section">
-          <h2>画布比例</h2>
+          <h2>比例与视口</h2>
           <div className="workspace__preset-grid">
             {canvasPresets.map((preset) => (
               <button
@@ -492,6 +533,49 @@ export function EditorWorkspace() {
                 <div className="workspace__meta">{preset.scene}</div>
               </button>
             ))}
+          </div>
+          <div className="workspace__property-list workspace__property-list--tight">
+            <label className="workspace__property">
+              <span className="workspace__property-label">视口缩放</span>
+              <input
+                aria-label="zoom"
+                className="workspace__range"
+                max={1.2}
+                min={0.3}
+                onChange={(event) =>
+                  setCanvasViewport({
+                    zoom: Number(event.target.value)
+                  })
+                }
+                step={0.01}
+                type="range"
+                value={viewport.zoom}
+              />
+              <div className="workspace__property-value">
+                {Math.round(viewport.zoom * 100)}%
+              </div>
+            </label>
+            <div className="workspace__inline-actions">
+              <button
+                className="workspace__action-button"
+                onClick={() =>
+                  setCanvasViewport({
+                    panX: 0,
+                    panY: 0
+                  })
+                }
+                type="button"
+              >
+                视口回中
+              </button>
+              <button
+                className="workspace__action-button"
+                onClick={() => setActiveTool("hand")}
+                type="button"
+              >
+                切到平移模式
+              </button>
+            </div>
           </div>
         </section>
 
@@ -537,10 +621,46 @@ export function EditorWorkspace() {
                 </div>
               </div>
               <label className="workspace__property">
+                <span className="workspace__property-label">透明度</span>
+                <input
+                  className="workspace__range"
+                  max={1}
+                  min={0.1}
+                  onChange={(event) =>
+                    updateLayerOpacity(selectedLayer.id, Number(event.target.value))
+                  }
+                  step={0.01}
+                  type="range"
+                  value={selectedLayer.opacity}
+                />
+                <div className="workspace__property-value">
+                  {Math.round(selectedLayer.opacity * 100)}%
+                </div>
+              </label>
+              <div className="workspace__property">
+                <div className="workspace__property-label">对齐辅助</div>
+                <div className="workspace__inline-actions">
+                  <button
+                    className="workspace__action-button"
+                    onClick={() => centerLayer(selectedLayer.id, "horizontal")}
+                    type="button"
+                  >
+                    水平居中
+                  </button>
+                  <button
+                    className="workspace__action-button"
+                    onClick={() => centerLayer(selectedLayer.id, "vertical")}
+                    type="button"
+                  >
+                    垂直居中
+                  </button>
+                </div>
+              </div>
+              <label className="workspace__property">
                 <span className="workspace__property-label">缩放</span>
                 <input
                   className="workspace__range"
-                  max={1.6}
+                  max={1.8}
                   min={0.3}
                   onChange={(event) => {
                     const scale = Number(event.target.value);
@@ -603,20 +723,221 @@ export function EditorWorkspace() {
                   </button>
                 </div>
               </div>
+
               {selectedImageLayer ? (
-                <div className="workspace__property">
-                  <div className="workspace__property-label">图片信息</div>
-                  <div className="workspace__property-value">
-                    {selectedImageLayer.originalWidth} ×{" "}
-                    {selectedImageLayer.originalHeight}
+                <>
+                  <div className="workspace__property">
+                    <div className="workspace__property-label">裁剪适配投放</div>
+                    <div className="workspace__button-grid">
+                      {cropAspectOptions.map((option) => (
+                        <button
+                          key={option.label}
+                          className="workspace__action-button"
+                          onClick={() => {
+                            setActiveTool("crop");
+                            setImageCropAspect(selectedImageLayer.id, option.value);
+                          }}
+                          type="button"
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="workspace__footer-note">
+                      当前裁剪区域：{selectedImageLayer.crop.width} ×{" "}
+                      {selectedImageLayer.crop.height}，建议配合安全区检查标题和卖点位置。
+                    </p>
                   </div>
-                  <p className="workspace__footer-note">
-                    裁切交互已预留扩展位，当前版本先支持导入、缩放、旋转和翻转。
-                  </p>
-                </div>
+                  <label className="workspace__property">
+                    <span className="workspace__property-label">裁剪 X</span>
+                    <input
+                      className="workspace__range"
+                      max={Math.max(
+                        0,
+                        selectedImageLayer.originalWidth - selectedImageLayer.crop.width
+                      )}
+                      min={0}
+                      onChange={(event) =>
+                        updateImageCrop(selectedImageLayer.id, {
+                          x: Number(event.target.value)
+                        })
+                      }
+                      step={1}
+                      type="range"
+                      value={selectedImageLayer.crop.x}
+                    />
+                    <div className="workspace__property-value">{selectedImageLayer.crop.x}px</div>
+                  </label>
+                  <label className="workspace__property">
+                    <span className="workspace__property-label">裁剪 Y</span>
+                    <input
+                      className="workspace__range"
+                      max={Math.max(
+                        0,
+                        selectedImageLayer.originalHeight - selectedImageLayer.crop.height
+                      )}
+                      min={0}
+                      onChange={(event) =>
+                        updateImageCrop(selectedImageLayer.id, {
+                          y: Number(event.target.value)
+                        })
+                      }
+                      step={1}
+                      type="range"
+                      value={selectedImageLayer.crop.y}
+                    />
+                    <div className="workspace__property-value">{selectedImageLayer.crop.y}px</div>
+                  </label>
+                  <label className="workspace__property">
+                    <span className="workspace__property-label">裁剪宽度</span>
+                    <input
+                      className="workspace__range"
+                      max={selectedImageLayer.originalWidth - selectedImageLayer.crop.x}
+                      min={60}
+                      onChange={(event) =>
+                        updateImageCrop(selectedImageLayer.id, {
+                          width: Number(event.target.value)
+                        })
+                      }
+                      step={1}
+                      type="range"
+                      value={selectedImageLayer.crop.width}
+                    />
+                    <div className="workspace__property-value">
+                      {selectedImageLayer.crop.width}px
+                    </div>
+                  </label>
+                  <label className="workspace__property">
+                    <span className="workspace__property-label">裁剪高度</span>
+                    <input
+                      className="workspace__range"
+                      max={selectedImageLayer.originalHeight - selectedImageLayer.crop.y}
+                      min={60}
+                      onChange={(event) =>
+                        updateImageCrop(selectedImageLayer.id, {
+                          height: Number(event.target.value)
+                        })
+                      }
+                      step={1}
+                      type="range"
+                      value={selectedImageLayer.crop.height}
+                    />
+                    <div className="workspace__property-value">
+                      {selectedImageLayer.crop.height}px
+                    </div>
+                  </label>
+                  <div className="workspace__inline-actions">
+                    <button
+                      className="workspace__action-button"
+                      onClick={() => resetImageCrop(selectedImageLayer.id)}
+                      type="button"
+                    >
+                      重置裁剪
+                    </button>
+                    <button
+                      className="workspace__action-button"
+                      onClick={() => setActiveTool("hand")}
+                      type="button"
+                    >
+                      裁完去平移
+                    </button>
+                  </div>
+                  <div className="workspace__property">
+                    <div className="workspace__property-label">电商滤镜预设</div>
+                    <div className="workspace__tool-stack">
+                      {imageFilterPresets.map((preset) => (
+                        <button
+                          key={preset.id}
+                          className={`workspace__tool-button workspace__tool-button--stack ${
+                            selectedImageLayer.presetFilterId === preset.id ? "is-active" : ""
+                          }`}
+                          onClick={() => applyImagePreset(selectedImageLayer.id, preset.id)}
+                          type="button"
+                        >
+                          <strong>{preset.label}</strong>
+                          <span>{preset.description}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="workspace__property">
+                    <div className="workspace__property-label">一键增强</div>
+                    <div className="workspace__inline-actions">
+                      {enhanceProfiles.map((profile) => (
+                        <button
+                          key={profile.id}
+                          className="workspace__action-button"
+                          onClick={() => applyEnhanceProfile(selectedImageLayer.id, profile.id)}
+                          type="button"
+                        >
+                          {profile.label}
+                        </button>
+                      ))}
+                      <button
+                        className="workspace__action-button"
+                        onClick={() => resetImageAdjustments(selectedImageLayer.id)}
+                        type="button"
+                      >
+                        清空调整
+                      </button>
+                    </div>
+                    <p className="workspace__footer-note">
+                      当前为轻量增强策略，优先服务带货图首屏可读性和商品清晰度。
+                    </p>
+                  </div>
+                  {(
+                    [
+                      ["brightness", "亮度", -1, 1, 0.01],
+                      ["contrast", "对比度", -1, 1, 0.01],
+                      ["saturation", "饱和度", -1, 1, 0.01],
+                      ["blur", "模糊", 0, 1, 0.01],
+                      ["sharpen", "锐化", 0, 1, 0.01],
+                      ["temperature", "色温", -1, 1, 0.01]
+                    ] as const
+                  ).map(([key, label, min, max, step]) => (
+                    <label className="workspace__property" key={key}>
+                      <span className="workspace__property-label">{label}</span>
+                      <input
+                        className="workspace__range"
+                        max={max}
+                        min={min}
+                        onChange={(event) =>
+                          updateImageFilters(selectedImageLayer.id, {
+                            [key]: Number(event.target.value)
+                          })
+                        }
+                        step={step}
+                        type="range"
+                        value={selectedImageLayer.filters[key]}
+                      />
+                      <div className="workspace__property-value">
+                        {selectedImageLayer.filters[key].toFixed(2)}
+                      </div>
+                    </label>
+                  ))}
+                </>
               ) : null}
+
               {selectedTextLayer ? (
                 <>
+                  <div className="workspace__property">
+                    <div className="workspace__property-label">高频花字模板</div>
+                    <div className="workspace__tool-stack">
+                      {textTemplatePresets.map((template) => (
+                        <button
+                          key={template.id}
+                          className={`workspace__tool-button workspace__tool-button--stack ${
+                            selectedTextLayer.textTemplateId === template.id ? "is-active" : ""
+                          }`}
+                          onClick={() => applyTextTemplate(selectedTextLayer.id, template.id)}
+                          type="button"
+                        >
+                          <strong>{template.label}</strong>
+                          <span>{template.content}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <label className="workspace__property">
                     <span className="workspace__property-label">花字内容</span>
                     <textarea
@@ -776,52 +1097,10 @@ export function EditorWorkspace() {
                       type="text"
                       value={selectedTextLayer.style.shadow}
                     />
-                    <p className="workspace__footer-note">
-                      支持 CSS 风格阴影字符串，方便快速微调花字立体感。
-                    </p>
                   </label>
                 </>
               ) : null}
-              {selectedImageLayer ? (
-                <>
-                  <div className="workspace__property">
-                    <div className="workspace__property-label">基础滤镜</div>
-                    <p className="workspace__footer-note">
-                      当前为实时预览调节，适合对 AIGC 初稿做快速色调和锐度微修。
-                    </p>
-                  </div>
-                  {(
-                    [
-                      ["brightness", "亮度", -1, 1, 0.01],
-                      ["contrast", "对比度", -1, 1, 0.01],
-                      ["saturation", "饱和度", -1, 1, 0.01],
-                      ["blur", "模糊", 0, 1, 0.01],
-                      ["sharpen", "锐化", 0, 1, 0.01],
-                      ["temperature", "色温", -1, 1, 0.01]
-                    ] as const
-                  ).map(([key, label, min, max, step]) => (
-                    <label className="workspace__property" key={key}>
-                      <span className="workspace__property-label">{label}</span>
-                      <input
-                        className="workspace__range"
-                        max={max}
-                        min={min}
-                        onChange={(event) =>
-                          updateImageFilters(selectedImageLayer.id, {
-                            [key]: Number(event.target.value)
-                          })
-                        }
-                        step={step}
-                        type="range"
-                        value={selectedImageLayer.filters[key]}
-                      />
-                      <div className="workspace__property-value">
-                        {selectedImageLayer.filters[key].toFixed(2)}
-                      </div>
-                    </label>
-                  ))}
-                </>
-              ) : null}
+
               {selectedDecorationLayer ? (
                 <>
                   <label className="workspace__property">
@@ -860,22 +1139,6 @@ export function EditorWorkspace() {
           ) : (
             <p className="workspace__empty">选择一个图层后，这里会展示可编辑属性。</p>
           )}
-        </section>
-
-        <section className="workspace__section">
-          <h3>缩放预览</h3>
-          <input
-            aria-label="zoom"
-            className="workspace__range"
-            max={120}
-            min={30}
-            onChange={(event) => setZoomPercent(Number(event.target.value))}
-            type="range"
-            value={zoomPercent}
-          />
-          <p className="workspace__footer-note">
-            当前缩放用于工作台预览，后续会继续接入更完整的画布缩放与平移控制。
-          </p>
         </section>
       </aside>
     </div>

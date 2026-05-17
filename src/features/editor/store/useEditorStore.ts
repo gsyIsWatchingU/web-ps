@@ -1,22 +1,40 @@
 import { create } from "zustand";
 import {
+  createDefaultImageFilters,
   createDefaultTextStyle,
+  createImageCrop,
   createInitialDocument,
   createLayerId,
   getCanvasPreset,
+  getEnhanceProfile,
+  getImageFilterPreset,
+  getTextTemplatePreset,
   normalizeLayerOrder,
   type CanvasPresetId,
+  type CanvasViewport,
   type DecorationLayer,
   type EditorDocument,
   type EditorLayer,
+  type EnhanceProfileId,
+  type ImageCrop,
   type ImageLayer,
+  type ImagePresetFilterId,
   type LayerTransform,
-  type TextLayer
+  type TextLayer,
+  type TextTemplateId
 } from "../model/document";
 import { editorDocumentSchema } from "../model/document.schema";
 
-type EditorTool = "select" | "text" | "shape" | "filter";
+export type EditorTool =
+  | "select"
+  | "hand"
+  | "crop"
+  | "text"
+  | "shape"
+  | "filter";
+
 type LayerOrderDirection = "up" | "down";
+type AlignmentAxis = "horizontal" | "vertical";
 type HistoryEntry = {
   document: EditorDocument;
   selectedLayerIds: string[];
@@ -24,19 +42,19 @@ type HistoryEntry = {
 
 type EditorStore = {
   activeTool: EditorTool;
-  zoomPercent: number;
   selectedLayerIds: string[];
   document: EditorDocument;
   historyPast: HistoryEntry[];
   historyFuture: HistoryEntry[];
   setActiveTool: (tool: EditorTool) => void;
   setCanvasPreset: (presetId: CanvasPresetId) => void;
-  setZoomPercent: (value: number) => void;
+  setCanvasViewport: (viewport: Partial<CanvasViewport>) => void;
   selectLayer: (layerId: string) => void;
   setSelectedLayerIds: (layerIds: string[]) => void;
   importImage: (file: File) => Promise<void>;
   addTextLayer: () => void;
   addDecorationLayer: () => void;
+  applyTextTemplate: (layerId: string, templateId: TextTemplateId) => void;
   updateLayerName: (layerId: string, name: string) => void;
   toggleLayerVisibility: (layerId: string) => void;
   toggleLayerLock: (layerId: string) => void;
@@ -47,6 +65,8 @@ type EditorStore = {
     layerId: string,
     transform: Partial<LayerTransform>
   ) => void;
+  centerLayer: (layerId: string, axis: AlignmentAxis) => void;
+  updateLayerOpacity: (layerId: string, opacity: number) => void;
   updateTextContent: (layerId: string, content: string) => void;
   updateTextStyle: (
     layerId: string,
@@ -56,9 +76,16 @@ type EditorStore = {
     layerId: string,
     filters: Partial<ImageLayer["filters"]>
   ) => void;
+  applyImagePreset: (layerId: string, presetId: ImagePresetFilterId) => void;
+  applyEnhanceProfile: (layerId: string, profileId: EnhanceProfileId) => void;
+  resetImageAdjustments: (layerId: string) => void;
+  updateImageCrop: (layerId: string, crop: Partial<ImageCrop>) => void;
+  setImageCropAspect: (layerId: string, aspectRatio: number | null) => void;
+  resetImageCrop: (layerId: string) => void;
   updateDecorationShape: (layerId: string, shape: DecorationLayer["shape"]) => void;
   updateDecorationFill: (layerId: string, fill: string) => void;
   updateExportConfig: (config: Partial<EditorDocument["exportConfig"]>) => void;
+  recordWorkflowExport: () => void;
   undo: () => void;
   redo: () => void;
 };
@@ -120,6 +147,10 @@ function commitDocumentChange(
   };
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function loadImageAsset(file: File) {
   return new Promise<{
     source: string;
@@ -175,7 +206,15 @@ function loadInitialDocument() {
       return editorDocumentSchema.parse(fallback);
     }
 
-    return editorDocumentSchema.parse(JSON.parse(raw));
+    const parsed = editorDocumentSchema.parse(JSON.parse(raw));
+
+    return {
+      ...parsed,
+      workflowMeta: {
+        ...parsed.workflowMeta,
+        sceneTag: getCanvasPreset(parsed.canvas.presetId).scene
+      }
+    };
   } catch {
     return editorDocumentSchema.parse(fallback);
   }
@@ -234,9 +273,55 @@ function cloneLayer(layer: EditorLayer): EditorLayer {
   return cloned;
 }
 
+function buildCropFromAspect(layer: ImageLayer, aspectRatio: number | null) {
+  if (!aspectRatio) {
+    return createImageCrop(layer.originalWidth, layer.originalHeight);
+  }
+
+  const originalRatio = layer.originalWidth / layer.originalHeight;
+  let width = layer.originalWidth;
+  let height = layer.originalHeight;
+
+  if (originalRatio > aspectRatio) {
+    width = Math.round(height * aspectRatio);
+  } else {
+    height = Math.round(width / aspectRatio);
+  }
+
+  return {
+    x: Math.round((layer.originalWidth - width) / 2),
+    y: Math.round((layer.originalHeight - height) / 2),
+    width,
+    height
+  } satisfies ImageCrop;
+}
+
+function getLayerSize(layer: EditorLayer) {
+  if (layer.type === "image") {
+    return {
+      width: layer.crop.width * layer.transform.scaleX,
+      height: layer.crop.height * layer.transform.scaleY
+    };
+  }
+
+  if (layer.type === "text") {
+    return {
+      width: 560 * layer.transform.scaleX,
+      height: layer.style.fontSize * 1.8 * layer.transform.scaleY
+    };
+  }
+
+  const width = layer.shape === "highlight" ? 300 : 240;
+  const height = layer.shape === "ribbon" ? 86 : 120;
+
+  return {
+    width: width * layer.transform.scaleX,
+    height: height * layer.transform.scaleY
+  };
+}
+
 export const useEditorStore = create<EditorStore>((set) => ({
   activeTool: "select",
-  zoomPercent: 72,
   selectedLayerIds: [initialDocument.layers[1]?.id ?? initialDocument.layers[0].id],
   document: initialDocument,
   historyPast: [],
@@ -271,11 +356,27 @@ export const useEditorStore = create<EditorStore>((set) => ({
             height: preset.height,
             safeAreaInset: Math.round(state.document.canvas.safeAreaInset * scaleFit)
           },
+          workflowMeta: {
+            ...state.document.workflowMeta,
+            sceneTag: preset.scene
+          },
           layers: nextLayers
         })
       );
     }),
-  setZoomPercent: (value) => set({ zoomPercent: value }),
+  setCanvasViewport: (viewport) =>
+    set((state) => ({
+      document: {
+        ...state.document,
+        canvas: {
+          ...state.document.canvas,
+          viewport: {
+            ...state.document.canvas.viewport,
+            ...viewport
+          }
+        }
+      }
+    })),
   selectLayer: (layerId) => set({ selectedLayerIds: [layerId] }),
   setSelectedLayerIds: (layerIds) => set({ selectedLayerIds: layerIds }),
   importImage: async (file) => {
@@ -299,14 +400,13 @@ export const useEditorStore = create<EditorStore>((set) => ({
         source: asset.source,
         originalWidth: asset.width,
         originalHeight: asset.height,
-        cropHint: "planned",
-        filters: {
-          brightness: 0,
-          contrast: 0,
-          saturation: 0,
-          blur: 0,
-          sharpen: 0,
-          temperature: 0
+        crop: createImageCrop(asset.width, asset.height),
+        presetFilterId: null,
+        enhanceProfileId: null,
+        filters: createDefaultImageFilters(),
+        mask: {
+          hasMaskPreview: false,
+          strokes: 0
         }
       };
       const normalized = normalizeLayerOrder([...state.document.layers, nextLayer]);
@@ -335,6 +435,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
           180
         ),
         content: "输入卖点文案",
+        textTemplateId: null,
         style: createDefaultTextStyle()
       };
       const normalized = normalizeLayerOrder([...state.document.layers, nextLayer]);
@@ -374,20 +475,45 @@ export const useEditorStore = create<EditorStore>((set) => ({
         { activeTool: "shape" }
       );
     }),
+  applyTextTemplate: (layerId, templateId) =>
+    set((state) => {
+      const template = getTextTemplatePreset(templateId);
+
+      return commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "text"
+              ? {
+                  ...layer,
+                  name: template.name,
+                  content: template.content,
+                  textTemplateId: template.id,
+                  style: {
+                    ...layer.style,
+                    ...template.style
+                  }
+                }
+              : layer
+          )
+        ),
+        [layerId]
+      );
+    }),
   updateLayerName: (layerId, name) =>
     set((state) =>
       commitDocumentChange(
         state,
         updateLayers(state.document, (layers) =>
-        layers.map((layer) =>
-          layer.id === layerId
-            ? {
-                ...layer,
-                name: name.trim() || layer.name
-              }
-            : layer
+          layers.map((layer) =>
+            layer.id === layerId
+              ? {
+                  ...layer,
+                  name: name.trim() || layer.name
+                }
+              : layer
+          )
         )
-      )
       )
     ),
   toggleLayerVisibility: (layerId) =>
@@ -395,15 +521,15 @@ export const useEditorStore = create<EditorStore>((set) => ({
       commitDocumentChange(
         state,
         updateLayers(state.document, (layers) =>
-        layers.map((layer) =>
-          layer.id === layerId
-            ? {
-                ...layer,
-                visible: !layer.visible
-              }
-            : layer
+          layers.map((layer) =>
+            layer.id === layerId
+              ? {
+                  ...layer,
+                  visible: !layer.visible
+                }
+              : layer
+          )
         )
-      )
       )
     ),
   toggleLayerLock: (layerId) =>
@@ -411,15 +537,15 @@ export const useEditorStore = create<EditorStore>((set) => ({
       commitDocumentChange(
         state,
         updateLayers(state.document, (layers) =>
-        layers.map((layer) =>
-          layer.id === layerId
-            ? {
-                ...layer,
-                locked: !layer.locked
-              }
-            : layer
+          layers.map((layer) =>
+            layer.id === layerId
+              ? {
+                  ...layer,
+                  locked: !layer.locked
+                }
+              : layer
+          )
         )
-      )
       )
     ),
   duplicateLayer: (layerId) =>
@@ -464,11 +590,7 @@ export const useEditorStore = create<EditorStore>((set) => ({
       const currentIndex = sorted.findIndex((layer) => layer.id === layerId);
       const targetIndex = direction === "up" ? currentIndex + 1 : currentIndex - 1;
 
-      if (
-        currentIndex === -1 ||
-        targetIndex < 0 ||
-        targetIndex >= sorted.length
-      ) {
+      if (currentIndex === -1 || targetIndex < 0 || targetIndex >= sorted.length) {
         return state;
       }
 
@@ -485,18 +607,64 @@ export const useEditorStore = create<EditorStore>((set) => ({
       commitDocumentChange(
         state,
         updateLayers(state.document, (layers) =>
-        layers.map((layer) =>
-          layer.id === layerId
-            ? {
-                ...layer,
-                transform: {
-                  ...layer.transform,
-                  ...transform
+          layers.map((layer) =>
+            layer.id === layerId
+              ? {
+                  ...layer,
+                  transform: {
+                    ...layer.transform,
+                    ...transform
+                  }
                 }
-              }
-            : layer
+              : layer
+          )
         )
       )
+    ),
+  centerLayer: (layerId, axis) =>
+    set((state) =>
+      commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) => {
+            if (layer.id !== layerId) {
+              return layer;
+            }
+
+            const size = getLayerSize(layer);
+
+            return {
+              ...layer,
+              transform: {
+                ...layer.transform,
+                x:
+                  axis === "horizontal"
+                    ? Math.round((state.document.canvas.width - size.width) / 2)
+                    : layer.transform.x,
+                y:
+                  axis === "vertical"
+                    ? Math.round((state.document.canvas.height - size.height) / 2)
+                    : layer.transform.y
+              }
+            };
+          })
+        )
+      )
+    ),
+  updateLayerOpacity: (layerId, opacity) =>
+    set((state) =>
+      commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) =>
+            layer.id === layerId
+              ? {
+                  ...layer,
+                  opacity: clamp(opacity, 0, 1)
+                }
+              : layer
+          )
+        )
       )
     ),
   updateTextContent: (layerId, content) =>
@@ -504,15 +672,15 @@ export const useEditorStore = create<EditorStore>((set) => ({
       commitDocumentChange(
         state,
         updateLayers(state.document, (layers) =>
-        layers.map((layer) =>
-          layer.id === layerId && layer.type === "text"
-            ? {
-                ...layer,
-                content
-              }
-            : layer
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "text"
+              ? {
+                  ...layer,
+                  content
+                }
+              : layer
+          )
         )
-      )
       )
     ),
   updateTextStyle: (layerId, style) =>
@@ -520,18 +688,18 @@ export const useEditorStore = create<EditorStore>((set) => ({
       commitDocumentChange(
         state,
         updateLayers(state.document, (layers) =>
-        layers.map((layer) =>
-          layer.id === layerId && layer.type === "text"
-            ? {
-                ...layer,
-                style: {
-                  ...layer.style,
-                  ...style
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "text"
+              ? {
+                  ...layer,
+                  style: {
+                    ...layer.style,
+                    ...style
+                  }
                 }
-              }
-            : layer
+              : layer
+          )
         )
-      )
       )
     ),
   updateImageFilters: (layerId, filters) =>
@@ -539,18 +707,157 @@ export const useEditorStore = create<EditorStore>((set) => ({
       commitDocumentChange(
         state,
         updateLayers(state.document, (layers) =>
-        layers.map((layer) =>
-          layer.id === layerId && layer.type === "image"
-            ? {
-                ...layer,
-                filters: {
-                  ...layer.filters,
-                  ...filters
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "image"
+              ? {
+                  ...layer,
+                  presetFilterId: null,
+                  enhanceProfileId: null,
+                  filters: {
+                    ...layer.filters,
+                    ...filters
+                  }
                 }
-              }
-            : layer
+              : layer
+          )
         )
       )
+    ),
+  applyImagePreset: (layerId, presetId) =>
+    set((state) => {
+      const preset = getImageFilterPreset(presetId);
+
+      return commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "image"
+              ? {
+                  ...layer,
+                  presetFilterId: preset.id,
+                  enhanceProfileId: null,
+                  filters: preset.filters
+                }
+              : layer
+          )
+        )
+      );
+    }),
+  applyEnhanceProfile: (layerId, profileId) =>
+    set((state) => {
+      const profile = getEnhanceProfile(profileId);
+
+      return commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "image"
+              ? {
+                  ...layer,
+                  enhanceProfileId: profile.id,
+                  filters: profile.filters
+                }
+              : layer
+          )
+        )
+      );
+    }),
+  resetImageAdjustments: (layerId) =>
+    set((state) =>
+      commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "image"
+              ? {
+                  ...layer,
+                  presetFilterId: null,
+                  enhanceProfileId: null,
+                  filters: createDefaultImageFilters()
+                }
+              : layer
+          )
+        )
+      )
+    ),
+  updateImageCrop: (layerId, crop) =>
+    set((state) =>
+      commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) => {
+            if (layer.id !== layerId || layer.type !== "image") {
+              return layer;
+            }
+
+            const nextCrop = {
+              ...layer.crop,
+              ...crop
+            };
+            const width = clamp(
+              Math.round(nextCrop.width),
+              1,
+              layer.originalWidth - nextCrop.x
+            );
+            const height = clamp(
+              Math.round(nextCrop.height),
+              1,
+              layer.originalHeight - nextCrop.y
+            );
+            const x = clamp(
+              Math.round(nextCrop.x),
+              0,
+              layer.originalWidth - width
+            );
+            const y = clamp(
+              Math.round(nextCrop.y),
+              0,
+              layer.originalHeight - height
+            );
+
+            return {
+              ...layer,
+              crop: {
+                x,
+                y,
+                width,
+                height
+              }
+            };
+          })
+        )
+      )
+    ),
+  setImageCropAspect: (layerId, aspectRatio) =>
+    set((state) =>
+      commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "image"
+              ? {
+                  ...layer,
+                  crop: buildCropFromAspect(layer, aspectRatio)
+                }
+              : layer
+          )
+        )
+      )
+    ),
+  resetImageCrop: (layerId) =>
+    set((state) =>
+      commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "image"
+              ? {
+                  ...layer,
+                  crop: createImageCrop(layer.originalWidth, layer.originalHeight)
+                }
+              : layer
+          )
+        )
       )
     ),
   updateDecorationShape: (layerId, shape) =>
@@ -558,15 +865,15 @@ export const useEditorStore = create<EditorStore>((set) => ({
       commitDocumentChange(
         state,
         updateLayers(state.document, (layers) =>
-        layers.map((layer) =>
-          layer.id === layerId && layer.type === "decoration"
-            ? {
-                ...layer,
-                shape
-              }
-            : layer
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "decoration"
+              ? {
+                  ...layer,
+                  shape
+                }
+              : layer
+          )
         )
-      )
       )
     ),
   updateDecorationFill: (layerId, fill) =>
@@ -574,15 +881,15 @@ export const useEditorStore = create<EditorStore>((set) => ({
       commitDocumentChange(
         state,
         updateLayers(state.document, (layers) =>
-        layers.map((layer) =>
-          layer.id === layerId && layer.type === "decoration"
-            ? {
-                ...layer,
-                fill
-              }
-            : layer
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "decoration"
+              ? {
+                  ...layer,
+                  fill
+                }
+              : layer
+          )
         )
-      )
       )
     ),
   updateExportConfig: (config) =>
@@ -596,6 +903,17 @@ export const useEditorStore = create<EditorStore>((set) => ({
         updatedAt: new Date().toISOString()
       })
     ),
+  recordWorkflowExport: () =>
+    set((state) => ({
+      document: {
+        ...state.document,
+        workflowMeta: {
+          ...state.document.workflowMeta,
+          version: state.document.workflowMeta.version + 1,
+          lastExportedAt: new Date().toISOString()
+        }
+      }
+    })),
   undo: () =>
     set((state) => {
       const previous = state.historyPast.at(-1);
