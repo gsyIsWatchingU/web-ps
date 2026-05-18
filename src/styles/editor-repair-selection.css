@@ -1,0 +1,4 @@
+.workspace__tool-button--compact[aria-label="擦除圈选"],
+.workspace__tool-button--compact[aria-label="执行修复"] {
+  display: none;
+}
