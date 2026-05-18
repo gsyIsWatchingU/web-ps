@@ -115,7 +115,7 @@ function clampDimension(value: number) {
 function renderLayerStatusChips(layer: EditorLayer, isSelected = false) {
   return (
     <div className="workspace__layer-meta">
-      {isSelected ? <span className="workspace__chip workspace__chip--accent">当前图层</span> : null}
+      {/* {isSelected ? <span className="workspace__chip workspace__chip--accent">当前图层</span> : null} */}
       <span className="workspace__chip">{layerTypeLabels[layer.type]}</span>
       <span className={`workspace__chip ${layer.visible ? "workspace__chip--success" : "workspace__chip--muted"}`}>
         {layer.visible ? "显示中" : "已隐藏"}
