@@ -40,9 +40,9 @@ export const layerTypes = ["image", "text", "decoration", "doodle"] as const;
 export const textTemplateIds = ["title", "price", "coupon", "highlight"] as const;
 export const imagePresetFilterIds = ["beauty", "food", "fashion", "home"] as const;
 export const enhanceProfileIds = ["auto"] as const;
+export const canvasBackgroundModes = ["grid", "solid", "dots"] as const;
 export const editorToolIds = [
   "select",
-  "hand",
   "crop",
   "doodle",
   "brush",
@@ -58,6 +58,7 @@ export type LayerType = (typeof layerTypes)[number];
 export type TextTemplateId = (typeof textTemplateIds)[number];
 export type ImagePresetFilterId = (typeof imagePresetFilterIds)[number];
 export type EnhanceProfileId = (typeof enhanceProfileIds)[number];
+export type CanvasBackgroundMode = (typeof canvasBackgroundModes)[number];
 export type EditorTool = (typeof editorToolIds)[number];
 
 export type LayerTransform = {
@@ -186,14 +187,28 @@ export type CanvasModel = {
   width: number;
   height: number;
   backgroundColor: string;
+  displayBackground: {
+    mode: CanvasBackgroundMode;
+    color: string;
+  };
   safeAreaInset: number;
   viewport: CanvasViewport;
 };
+
+export type ExportQualityPreset = "standard" | "high";
+export type ExportResizeMode = "fixed" | "scale";
+export type ExportSizePreset = "group" | "free" | "1inch" | "2inch";
 
 export type ExportConfig = {
   format: "png" | "jpeg";
   quality: number;
   scale: number;
+  qualityPreset: ExportQualityPreset;
+  resizeMode: ExportResizeMode;
+  sizePreset: ExportSizePreset;
+  width: number;
+  height: number;
+  scalePercent: number;
 };
 
 export type DraftMeta = {
@@ -489,6 +504,22 @@ export function createDefaultImageAiMeta(): ImageAiMeta {
   };
 }
 
+export function createDefaultExportConfig(
+  canvas: Pick<CanvasModel, "width" | "height"> = getCanvasPreset("4:5")
+): ExportConfig {
+  return {
+    format: "png",
+    quality: 0.92,
+    scale: 1,
+    qualityPreset: "high",
+    resizeMode: "fixed",
+    sizePreset: "group",
+    width: canvas.width,
+    height: canvas.height,
+    scalePercent: 100
+  };
+}
+
 export function createInitialDocument(): EditorDocument {
   const preset = getCanvasPreset("4:5");
 
@@ -500,6 +531,10 @@ export function createInitialDocument(): EditorDocument {
       width: preset.width,
       height: preset.height,
       backgroundColor: "#fbf6ef",
+      displayBackground: {
+        mode: "grid",
+        color: "#fbf6ef"
+      },
       safeAreaInset: 72,
       viewport: {
         zoom: 0.72,
@@ -569,11 +604,7 @@ export function createInitialDocument(): EditorDocument {
         fill: "#cf5b2d"
       }
     ],
-    exportConfig: {
-      format: "png",
-      quality: 0.92,
-      scale: 1
-    },
+    exportConfig: createDefaultExportConfig(preset),
     draftMeta: {
       enabled: true,
       storageKey: "web-ps/editor-draft",

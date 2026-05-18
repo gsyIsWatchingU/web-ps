@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  canvasBackgroundModes,
   canvasPresets,
   enhanceProfileIds,
   imagePresetFilterIds,
@@ -30,6 +31,11 @@ const imagePresetValues = [...imagePresetFilterIds] as [
 const enhanceProfileValues = [...enhanceProfileIds] as [
   (typeof enhanceProfileIds)[number],
   ...(typeof enhanceProfileIds)[number][]
+];
+
+const canvasBackgroundModeValues = [...canvasBackgroundModes] as [
+  (typeof canvasBackgroundModes)[number],
+  ...(typeof canvasBackgroundModes)[number][]
 ];
 
 const transformSchema = z.object({
@@ -137,6 +143,37 @@ const doodleLayerSchema = layerBaseSchema.extend({
   strokeWidth: z.number().positive()
 });
 
+const exportConfigSchema = z.union([
+  z.object({
+    format: z.enum(["png", "jpeg"]),
+    quality: z.number().min(0).max(1),
+    scale: z.number().positive(),
+    qualityPreset: z.enum(["standard", "high"]),
+    resizeMode: z.enum(["fixed", "scale"]),
+    sizePreset: z.enum(["group", "free", "1inch", "2inch"]),
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+    scalePercent: z.number().positive()
+  }),
+  z
+    .object({
+      format: z.enum(["png", "jpeg"]),
+      quality: z.number().min(0).max(1),
+      scale: z.number().positive()
+    })
+    .transform((legacy) => ({
+      format: legacy.format,
+      quality: legacy.quality,
+      scale: legacy.scale,
+      qualityPreset: legacy.quality >= 0.9 ? "high" : "standard",
+      resizeMode: "scale" as const,
+      sizePreset: "group" as const,
+      width: 1080,
+      height: 1350,
+      scalePercent: Math.round(legacy.scale * 100)
+    }))
+]);
+
 export const editorDocumentSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -145,6 +182,15 @@ export const editorDocumentSchema = z.object({
     width: z.number().positive(),
     height: z.number().positive(),
     backgroundColor: z.string(),
+    displayBackground: z
+      .object({
+        mode: z.enum(canvasBackgroundModeValues),
+        color: z.string()
+      })
+      .default({
+        mode: "grid",
+        color: "#fbf6ef"
+      }),
     safeAreaInset: z.number().nonnegative(),
     viewport: z.object({
       zoom: z.number().positive(),
@@ -160,11 +206,7 @@ export const editorDocumentSchema = z.object({
       doodleLayerSchema
     ])
   ),
-  exportConfig: z.object({
-    format: z.enum(["png", "jpeg"]),
-    quality: z.number().min(0).max(1),
-    scale: z.number().positive()
-  }),
+  exportConfig: exportConfigSchema,
   draftMeta: z.object({
     enabled: z.boolean(),
     storageKey: z.string(),

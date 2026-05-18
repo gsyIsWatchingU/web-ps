@@ -21,6 +21,7 @@ import type {
 
 type SeedCanvasOptions = {
   showSafeArea?: boolean;
+  renderCanvasBackground?: boolean;
   cropPreview?: {
     layerId: string;
     draft: ImageCrop;
@@ -225,14 +226,14 @@ export async function seedCanvas(
   selectedLayerIds: string[],
   options: SeedCanvasOptions = {}
 ) {
-  const { showSafeArea = true, cropPreview = null } = options;
+  const { showSafeArea = true, renderCanvasBackground = true, cropPreview = null } = options;
 
   canvas.clear();
   canvas.setDimensions({
     width: document.canvas.width,
     height: document.canvas.height
   });
-  canvas.backgroundColor = document.canvas.backgroundColor;
+  canvas.backgroundColor = renderCanvasBackground ? document.canvas.backgroundColor : "transparent";
 
   if (showSafeArea) {
     canvas.add(createSafeArea(document));

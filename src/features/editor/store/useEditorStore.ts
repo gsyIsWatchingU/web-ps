@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import {
+  type CanvasBackgroundMode,
+  createDefaultExportConfig,
   createDefaultDoodleStyle,
   createDefaultImageAiMeta,
   createDefaultImageFilters,
@@ -60,6 +62,9 @@ type EditorStore = {
   historyFuture: HistoryEntry[];
   setActiveTool: (tool: EditorTool) => void;
   setCanvasPreset: (presetId: CanvasPresetId) => void;
+  setCanvasDisplayBackground: (
+    background: Partial<EditorDocument["canvas"]["displayBackground"]>
+  ) => void;
   setCanvasViewport: (viewport: Partial<CanvasViewport>) => void;
   selectLayer: (layerId: string) => void;
   setSelectedLayerIds: (layerIds: string[]) => void;
@@ -116,6 +121,7 @@ type EditorStore = {
   cancelCropSession: () => void;
   applyAiRepair: (layerId: string) => Promise<AsyncResult>;
   applyAiExtend: (layerId: string, presetId: CanvasPresetId) => Promise<AsyncResult>;
+  clearCanvas: () => void;
   undo: () => void;
   redo: () => void;
 };
@@ -181,6 +187,13 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+function clearDocumentLayers(document: EditorDocument) {
+  return touchDocument({
+    ...document,
+    layers: []
+  });
+}
+
 function loadImageAsset(file: File) {
   return new Promise<{
     source: string;
@@ -241,39 +254,70 @@ async function getImageSize(source: string) {
   };
 }
 
-function loadInitialDocument() {
+function loadInitialDocument(): EditorDocument {
   const fallback = createInitialDocument();
 
   if (typeof window === "undefined") {
-    return editorDocumentSchema.parse(fallback);
+    return editorDocumentSchema.parse(fallback) as EditorDocument;
   }
 
   try {
     const raw = window.localStorage.getItem(fallback.draftMeta.storageKey);
 
     if (!raw) {
-      return editorDocumentSchema.parse(fallback);
+      return editorDocumentSchema.parse(fallback) as EditorDocument;
     }
 
-    const parsed = editorDocumentSchema.parse(JSON.parse(raw));
+    const parsed = editorDocumentSchema.parse(JSON.parse(raw)) as EditorDocument;
+
+    const parsedExportConfig = parsed.exportConfig as Partial<EditorDocument["exportConfig"]> &
+      Record<string, unknown>;
+    const normalizedExportConfig: EditorDocument["exportConfig"] = {
+      ...createDefaultExportConfig({
+        width: parsed.canvas.width,
+        height: parsed.canvas.height
+      }),
+      ...parsedExportConfig,
+      qualityPreset: parsedExportConfig.qualityPreset === "standard" ? "standard" : "high",
+      resizeMode: parsedExportConfig.resizeMode === "scale" ? "scale" : "fixed",
+      sizePreset:
+        parsedExportConfig.sizePreset === "free" ||
+        parsedExportConfig.sizePreset === "1inch" ||
+        parsedExportConfig.sizePreset === "2inch"
+          ? parsedExportConfig.sizePreset
+          : "group"
+    };
+
+    if (normalizedExportConfig.resizeMode === "fixed" && normalizedExportConfig.sizePreset === "group") {
+      normalizedExportConfig.width = parsed.canvas.width;
+      normalizedExportConfig.height = parsed.canvas.height;
+    }
 
     return stripTransientDocumentState({
       ...parsed,
+      exportConfig: normalizedExportConfig,
       workflowMeta: {
         ...parsed.workflowMeta,
         sceneTag: getCanvasPreset(parsed.canvas.presetId).scene
       }
     });
   } catch {
-    return editorDocumentSchema.parse(fallback);
+    return editorDocumentSchema.parse(fallback) as EditorDocument;
   }
 }
 
-const initialDocument = loadInitialDocument();
+const initialDocument: EditorDocument = loadInitialDocument();
 
 function stripTransientDocumentState(document: EditorDocument): EditorDocument {
   return {
     ...document,
+    canvas: {
+      ...document.canvas,
+      displayBackground: {
+        mode: document.canvas.displayBackground?.mode ?? ("grid" satisfies CanvasBackgroundMode),
+        color: document.canvas.displayBackground?.color ?? "#fbf6ef"
+      }
+    },
     layers: document.layers.map((layer) =>
       layer.type === "image"
         ? {
@@ -631,10 +675,32 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
             ...state.document.workflowMeta,
             sceneTag: preset.scene
           },
+          exportConfig:
+            state.document.exportConfig.resizeMode === "fixed" &&
+            state.document.exportConfig.sizePreset === "group"
+              ? {
+                  ...state.document.exportConfig,
+                  width: preset.width,
+                  height: preset.height
+                }
+              : state.document.exportConfig,
           layers: nextLayers
         })
       );
     }),
+  setCanvasDisplayBackground: (background) =>
+    set((state) => ({
+      document: touchDocument({
+        ...state.document,
+        canvas: {
+          ...state.document.canvas,
+          displayBackground: {
+            ...state.document.canvas.displayBackground,
+            ...background
+          }
+        }
+      })
+    })),
   setCanvasViewport: (viewport) =>
     set((state) => ({
       document: {
@@ -872,9 +938,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     }),
   moveLayer: (layerId, direction) =>
     set((state) => {
-      const sorted = [...state.document.layers].sort((left, right) => left.zIndex - right.zIndex);
+      const sorted = [...state.document.layers].sort((left, right) => right.zIndex - left.zIndex);
       const currentIndex = sorted.findIndex((layer) => layer.id === layerId);
-      const targetIndex = direction === "up" ? currentIndex + 1 : currentIndex - 1;
+      const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
 
       if (currentIndex === -1 || targetIndex < 0 || targetIndex >= sorted.length) {
         return state;
@@ -882,10 +948,16 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
       const next = [...sorted];
       [next[currentIndex], next[targetIndex]] = [next[targetIndex], next[currentIndex]];
+      const reordered = next
+        .map((layer, index, layers) => ({
+          ...layer,
+          zIndex: layers.length - index - 1
+        }))
+        .sort((left, right) => left.zIndex - right.zIndex);
 
       return commitDocumentChange(
         state,
-        touchDocument(state.document, normalizeLayerOrder(next))
+        touchDocument(state.document, reordered)
       );
     }),
   updateLayerTransform: (layerId, transform) =>
@@ -1165,16 +1237,26 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       )
     ),
   updateExportConfig: (config) =>
-    set((state) =>
-      commitDocumentChange(state, {
+    set((state) => {
+      const mergedExportConfig = {
+        ...state.document.exportConfig,
+        ...config
+      };
+
+      if ("qualityPreset" in config) {
+        mergedExportConfig.quality = config.qualityPreset === "high" ? 0.92 : 0.82;
+      }
+
+      if ("scalePercent" in config) {
+        mergedExportConfig.scale = mergedExportConfig.scalePercent / 100;
+      }
+
+      return commitDocumentChange(state, {
         ...state.document,
-        exportConfig: {
-          ...state.document.exportConfig,
-          ...config
-        },
+        exportConfig: mergedExportConfig,
         updatedAt: new Date().toISOString()
-      })
-    ),
+      });
+    }),
   recordWorkflowExport: () =>
     set((state) => ({
       document: {
@@ -1699,6 +1781,15 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       return { success: false, errorMessage: message };
     }
   },
+  clearCanvas: () =>
+    set((state) => ({
+      activeTool: "select",
+      selectedLayerIds: [],
+      document: clearDocumentLayers(state.document),
+      cropSession: null,
+      historyPast: [],
+      historyFuture: []
+    })),
   undo: () =>
     set((state) => {
       const previous = state.historyPast.at(-1);

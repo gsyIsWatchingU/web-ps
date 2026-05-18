@@ -1,7 +1,7 @@
 export const aiConfig = {
-  baseURL: "https://api-inference.modelscope.cn",
-  apiKey: "ms-ad11675a-84c2-40d2-abbf-e33059c38b8e",
-  model: "YOUR_IMAGE_MODEL_HERE",
+  baseURL: "https://openrouter.ai/api/v1",
+  apiKey: "sk-d938f4129b2a4704ba1240558be6e51f",
+  model: "qwen3.5-omni-plus-2026-03-15",
   timeoutMs: 90000
 } as const;
 

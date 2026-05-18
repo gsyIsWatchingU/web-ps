@@ -17,7 +17,7 @@ const toolGuides = [
   ["涂鸦", "在画布上自由手绘，生成新的涂鸦图层，后续还能再选中、移动、缩放和改颜色。"],
   ["圈选修复区域", "圈出需要 AI 修复的区域，这一步只是定义修复范围，还不会直接改图。"],
   ["擦除圈选区域", "擦掉误选范围，缩小 AI 需要处理的局部区域。"],
-  ["执行局部修复", "对当前圈选区域发起 AI 局部修复，修完后会替换当前图片图层内容。"],
+  ["执行局部修复", "对当前圈选区域发起 AI 局部修复，修完后会替换当前图片内容。"],
   ["文字", "添加标题、价格、优惠券等文案模板，并在右侧继续细调。"],
   ["滤镜", "快速套用画面预设，并继续微调亮度、对比度、锐度等参数。"],
   ["装饰", "添加贴片、徽章、高亮条等辅助元素，补强卖点表达。"]
@@ -48,7 +48,7 @@ export function HelpCenter({ onClose }: HelpCenterProps) {
 
       <section className="help-center__section">
         <div className="help-center__copy">
-          <h2>5 步快速上手</h2>
+          <h2>快速上手</h2>
           <ol className="help-center__list">
             {quickSteps.map((step) => (
               <li key={step}>{step}</li>
@@ -74,7 +74,7 @@ export function HelpCenter({ onClose }: HelpCenterProps) {
         <div className="help-center__copy">
           <h2>工具说明</h2>
           <ul className="help-center__list">
-            {toolGuides.map(([title, description]) => (
+            {toolGuides.filter(([title]) => title !== "平移").map(([title, description]) => (
               <li key={title}>
                 <strong>{title}</strong>：{description}
               </li>
@@ -88,7 +88,7 @@ export function HelpCenter({ onClose }: HelpCenterProps) {
         <div className="help-center__copy">
           <h2>AI 局部修复怎么用</h2>
           <ol className="help-center__list">
-            <li>先选中图片图层。</li>
+            <li>先选中图片。</li>
             <li>点击“圈选修复区域”，在画布上圈出不满意的位置。</li>
             <li>如果范围画大了，点击“擦除圈选区域”把误选区域擦掉。</li>
             <li>在右侧填写修复提示词，然后点击“执行局部修复”。</li>
@@ -102,7 +102,7 @@ export function HelpCenter({ onClose }: HelpCenterProps) {
         <div className="help-center__copy">
           <h2>裁剪怎么用</h2>
           <ol className="help-center__list">
-            <li>先选中图片图层，再点击“裁剪”。</li>
+            <li>先选中图片，再点击“裁剪”。</li>
             <li>在画布上拖动裁剪框，或拖四角手柄改变裁剪范围。</li>
             <li>右侧的比例按钮和滑杆可以用来精调位置和尺寸。</li>
             <li>确认后点击“应用裁剪”；如果想放弃本次调整，点击“取消裁剪”。</li>
