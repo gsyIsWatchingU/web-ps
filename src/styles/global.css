@@ -350,12 +350,16 @@ button {
 
 .workspace__canvas-layout {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 14px;
   min-height: 0;
+  height: 100%;
 }
 
 .workspace__stage {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   padding: 18px;
   overflow: hidden;
   min-height: 0;
@@ -387,7 +391,8 @@ button {
 
 .workspace__viewport-shell {
   position: relative;
-  min-height: 620px;
+  flex: 1;
+  min-height: 0;
   padding: 28px;
   background:
     linear-gradient(90deg, rgba(255, 255, 255, 0.35) 1px, transparent 1px),
@@ -398,10 +403,11 @@ button {
 }
 
 .workspace__viewport-inner {
-  min-width: max-content;
+  min-width: 100%;
   min-height: 100%;
   display: grid;
-  place-items: center;
+  justify-items: center;
+  align-items: start;
 }
 
 .workspace__viewport-board {

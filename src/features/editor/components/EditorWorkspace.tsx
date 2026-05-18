@@ -196,7 +196,6 @@ export function EditorWorkspace() {
     updateDecorationShape,
     updateDoodleStyle,
     updateExportConfig,
-    updateImageCrop,
     updateImageFilters,
     updateLayerName,
     updateLayerOpacity,
@@ -389,19 +388,6 @@ export function EditorWorkspace() {
     }
 
     setImageCropAspect(selectedImageLayer.id, aspectRatio);
-  };
-
-  const handleCropChange = (patch: Partial<ImageCrop>) => {
-    if (!selectedImageLayer) {
-      return;
-    }
-
-    if (activeTool === "crop") {
-      updateCropSession(patch);
-      return;
-    }
-
-    updateImageCrop(selectedImageLayer.id, patch);
   };
 
   const handleCropReset = () => {
@@ -799,36 +785,10 @@ export function EditorWorkspace() {
                         当前裁剪：{activeCropDraft.width} × {activeCropDraft.height}
                       </p>
                     ) : null}
+                    <p className="workspace__footer-note">
+                      进入裁剪模式后，直接拖动图片四边或四角即可自由裁剪，和 Word 里的图片裁剪方式一致。
+                    </p>
                   </div>
-
-                  {activeCropDraft
-                    ? (
-                        [
-                          ["x", "裁剪 X", 0, Math.max(0, selectedImageLayer.originalWidth - activeCropDraft.width)],
-                          ["y", "裁剪 Y", 0, Math.max(0, selectedImageLayer.originalHeight - activeCropDraft.height)],
-                          ["width", "裁剪宽度", 60, selectedImageLayer.originalWidth - activeCropDraft.x],
-                          ["height", "裁剪高度", 60, selectedImageLayer.originalHeight - activeCropDraft.y]
-                        ] as const
-                      ).map(([key, label, min, max]) => (
-                        <label className="workspace__property" key={key}>
-                          <span className="workspace__property-label">{label}</span>
-                          <input
-                            className="workspace__range"
-                            max={max}
-                            min={min}
-                            onChange={(event) =>
-                              handleCropChange({
-                                [key]: Number(event.target.value)
-                              })
-                            }
-                            step={1}
-                            type="range"
-                            value={activeCropDraft[key]}
-                          />
-                          <div className="workspace__property-value">{Math.round(activeCropDraft[key])}px</div>
-                        </label>
-                      ))
-                    : null}
 
                   <div className="workspace__inline-actions">
                     {activeTool === "crop" ? (

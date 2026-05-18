@@ -55,7 +55,7 @@ type LayerCanvasObject = {
   };
 };
 
-type CropHandle = "move" | "nw" | "ne" | "sw" | "se" | null;
+type CropHandle = "move" | "n" | "e" | "s" | "w" | "nw" | "ne" | "sw" | "se" | null;
 
 function getLayerId(target: unknown) {
   return (target as LayerCanvasObject | undefined)?.data?.layerId ?? null;
@@ -131,6 +131,65 @@ function getCropPreviewBounds(layer: ImageLayer, crop: ImageCrop) {
     cropWidth: crop.width * layer.transform.scaleX,
     cropHeight: crop.height * layer.transform.scaleY
   };
+}
+
+function resolveCropHandle(
+  docPoint: DoodlePoint,
+  bounds: ReturnType<typeof getCropPreviewBounds>
+): CropHandle {
+  const edgeTolerance = 12;
+  const cornerTolerance = 14;
+  const withinX = docPoint.x >= bounds.cropX && docPoint.x <= bounds.cropX + bounds.cropWidth;
+  const withinY = docPoint.y >= bounds.cropY && docPoint.y <= bounds.cropY + bounds.cropHeight;
+  const nearLeft = Math.abs(docPoint.x - bounds.cropX) <= edgeTolerance;
+  const nearRight = Math.abs(docPoint.x - (bounds.cropX + bounds.cropWidth)) <= edgeTolerance;
+  const nearTop = Math.abs(docPoint.y - bounds.cropY) <= edgeTolerance;
+  const nearBottom = Math.abs(docPoint.y - (bounds.cropY + bounds.cropHeight)) <= edgeTolerance;
+
+  if (nearLeft && nearTop) {
+    return "nw";
+  }
+
+  if (nearRight && nearTop) {
+    return "ne";
+  }
+
+  if (nearLeft && nearBottom) {
+    return "sw";
+  }
+
+  if (nearRight && nearBottom) {
+    return "se";
+  }
+
+  if (withinX && nearTop) {
+    return "n";
+  }
+
+  if (withinX && nearBottom) {
+    return "s";
+  }
+
+  if (withinY && nearLeft) {
+    return "w";
+  }
+
+  if (withinY && nearRight) {
+    return "e";
+  }
+
+  if (
+    withinX &&
+    withinY &&
+    docPoint.x >= bounds.cropX + cornerTolerance &&
+    docPoint.x <= bounds.cropX + bounds.cropWidth - cornerTolerance &&
+    docPoint.y >= bounds.cropY + cornerTolerance &&
+    docPoint.y <= bounds.cropY + bounds.cropHeight - cornerTolerance
+  ) {
+    return "move";
+  }
+
+  return null;
 }
 
 function drawMaskOverlay(
@@ -210,7 +269,8 @@ function drawCropOverlay(
   viewport: EditorDocument["canvas"]["viewport"]
 ) {
   const bounds = getCropPreviewBounds(layer, crop);
-  const handleRadius = 8;
+  const handleLength = 18;
+  const handleThickness = 6;
 
   context.save();
   context.setTransform(viewport.zoom, 0, 0, viewport.zoom, viewport.panX, viewport.panY);
@@ -224,18 +284,74 @@ function drawCropOverlay(
   context.strokeRect(bounds.cropX, bounds.cropY, bounds.cropWidth, bounds.cropHeight);
 
   const handles = [
-    { x: bounds.cropX, y: bounds.cropY },
-    { x: bounds.cropX + bounds.cropWidth, y: bounds.cropY },
-    { x: bounds.cropX, y: bounds.cropY + bounds.cropHeight },
-    { x: bounds.cropX + bounds.cropWidth, y: bounds.cropY + bounds.cropHeight }
+    {
+      x: bounds.cropX,
+      y: bounds.cropY,
+      width: handleLength,
+      height: handleThickness,
+      rotation: 45
+    },
+    {
+      x: bounds.cropX + bounds.cropWidth,
+      y: bounds.cropY,
+      width: handleLength,
+      height: handleThickness,
+      rotation: -45
+    },
+    {
+      x: bounds.cropX,
+      y: bounds.cropY + bounds.cropHeight,
+      width: handleLength,
+      height: handleThickness,
+      rotation: -45
+    },
+    {
+      x: bounds.cropX + bounds.cropWidth,
+      y: bounds.cropY + bounds.cropHeight,
+      width: handleLength,
+      height: handleThickness,
+      rotation: 45
+    },
+    {
+      x: bounds.cropX + bounds.cropWidth / 2,
+      y: bounds.cropY,
+      width: handleLength,
+      height: handleThickness,
+      rotation: 0
+    },
+    {
+      x: bounds.cropX + bounds.cropWidth / 2,
+      y: bounds.cropY + bounds.cropHeight,
+      width: handleLength,
+      height: handleThickness,
+      rotation: 0
+    },
+    {
+      x: bounds.cropX,
+      y: bounds.cropY + bounds.cropHeight / 2,
+      width: handleThickness,
+      height: handleLength,
+      rotation: 0
+    },
+    {
+      x: bounds.cropX + bounds.cropWidth,
+      y: bounds.cropY + bounds.cropHeight / 2,
+      width: handleThickness,
+      height: handleLength,
+      rotation: 0
+    }
   ];
 
   context.fillStyle = "#fffaf3";
   handles.forEach((handle) => {
+    context.save();
+    context.translate(handle.x, handle.y);
+    context.rotate((handle.rotation * Math.PI) / 180);
     context.beginPath();
-    context.arc(handle.x, handle.y, handleRadius, 0, Math.PI * 2);
+    context.rect(-handle.width / 2, -handle.height / 2, handle.width, handle.height);
     context.fill();
     context.stroke();
+    context.restore();
   });
 
   context.restore();
@@ -487,35 +603,7 @@ export function CanvasViewport({
         cropSessionRef.current.layerId === currentSelectedImageLayer.id
       ) {
         const bounds = getCropPreviewBounds(currentSelectedImageLayer, cropSessionRef.current.draft);
-        const handleSize = 14;
-        const corners = {
-          nw: { x: bounds.cropX, y: bounds.cropY },
-          ne: { x: bounds.cropX + bounds.cropWidth, y: bounds.cropY },
-          sw: { x: bounds.cropX, y: bounds.cropY + bounds.cropHeight },
-          se: { x: bounds.cropX + bounds.cropWidth, y: bounds.cropY + bounds.cropHeight }
-        } as const;
-
-        let handle: CropHandle = null;
-
-        (Object.keys(corners) as Array<Exclude<CropHandle, "move" | null>>).forEach((key) => {
-          const corner = corners[key];
-          if (
-            Math.abs(docPoint.x - corner.x) <= handleSize &&
-            Math.abs(docPoint.y - corner.y) <= handleSize
-          ) {
-            handle = key;
-          }
-        });
-
-        if (
-          !handle &&
-          docPoint.x >= bounds.cropX &&
-          docPoint.x <= bounds.cropX + bounds.cropWidth &&
-          docPoint.y >= bounds.cropY &&
-          docPoint.y <= bounds.cropY + bounds.cropHeight
-        ) {
-          handle = "move";
-        }
+        const handle = resolveCropHandle(docPoint, bounds);
 
         if (!handle) {
           return;
@@ -596,6 +684,30 @@ export function CanvasViewport({
         const startCrop = cropDragRef.current.startCrop;
         const right = startCrop.x + startCrop.width;
         const bottom = startCrop.y + startCrop.height;
+        const nextLeft =
+          cropDragRef.current.handle === "w" ||
+          cropDragRef.current.handle === "nw" ||
+          cropDragRef.current.handle === "sw"
+            ? Math.round(startCrop.x + deltaX)
+            : startCrop.x;
+        const nextTop =
+          cropDragRef.current.handle === "n" ||
+          cropDragRef.current.handle === "nw" ||
+          cropDragRef.current.handle === "ne"
+            ? Math.round(startCrop.y + deltaY)
+            : startCrop.y;
+        const nextRight =
+          cropDragRef.current.handle === "e" ||
+          cropDragRef.current.handle === "ne" ||
+          cropDragRef.current.handle === "se"
+            ? Math.round(right + deltaX)
+            : right;
+        const nextBottom =
+          cropDragRef.current.handle === "s" ||
+          cropDragRef.current.handle === "sw" ||
+          cropDragRef.current.handle === "se"
+            ? Math.round(bottom + deltaY)
+            : bottom;
 
         if (cropDragRef.current.handle === "move") {
           onCropSessionChangeRef.current({
@@ -605,40 +717,12 @@ export function CanvasViewport({
           return;
         }
 
-        if (cropDragRef.current.handle === "nw") {
-          onCropSessionChangeRef.current({
-            x: Math.round(startCrop.x + deltaX),
-            y: Math.round(startCrop.y + deltaY),
-            width: Math.round(right - (startCrop.x + deltaX)),
-            height: Math.round(bottom - (startCrop.y + deltaY))
-          });
-          return;
-        }
-
-        if (cropDragRef.current.handle === "ne") {
-          onCropSessionChangeRef.current({
-            y: Math.round(startCrop.y + deltaY),
-            width: Math.round(startCrop.width + deltaX),
-            height: Math.round(bottom - (startCrop.y + deltaY))
-          });
-          return;
-        }
-
-        if (cropDragRef.current.handle === "sw") {
-          onCropSessionChangeRef.current({
-            x: Math.round(startCrop.x + deltaX),
-            width: Math.round(right - (startCrop.x + deltaX)),
-            height: Math.round(startCrop.height + deltaY)
-          });
-          return;
-        }
-
-        if (cropDragRef.current.handle === "se") {
-          onCropSessionChangeRef.current({
-            width: Math.round(startCrop.width + deltaX),
-            height: Math.round(startCrop.height + deltaY)
-          });
-        }
+        onCropSessionChangeRef.current({
+          x: nextLeft,
+          y: nextTop,
+          width: nextRight - nextLeft,
+          height: nextBottom - nextTop
+        });
       }
     };
 
