@@ -4,39 +4,39 @@ export const canvasPresets = [
     label: "1:1",
     width: 1080,
     height: 1080,
-    scene: "商品主图"
+    scene: "商品方图"
   },
   {
     id: "3:4",
     label: "3:4",
     width: 900,
     height: 1200,
-    scene: "信息流海报"
+    scene: "商品竖版"
   },
   {
     id: "4:5",
     label: "4:5",
     width: 1080,
     height: 1350,
-    scene: "商城推荐图"
+    scene: "投放主图"
   },
   {
     id: "9:16",
     label: "9:16",
     width: 1080,
     height: 1920,
-    scene: "竖版封面"
+    scene: "短视频封面"
   },
   {
     id: "custom",
     label: "自定义",
     width: 1200,
     height: 1500,
-    scene: "自定义投放位"
+    scene: "自定义画布"
   }
 ] as const;
 
-export const layerTypes = ["image", "text", "decoration"] as const;
+export const layerTypes = ["image", "text", "decoration", "doodle"] as const;
 export const textTemplateIds = ["title", "price", "coupon", "highlight"] as const;
 export const imagePresetFilterIds = ["beauty", "food", "fashion", "home"] as const;
 export const enhanceProfileIds = ["auto"] as const;
@@ -44,6 +44,7 @@ export const editorToolIds = [
   "select",
   "hand",
   "crop",
+  "doodle",
   "brush",
   "eraser",
   "repair",
@@ -97,6 +98,11 @@ export type ImageFilters = {
 };
 
 export type MaskPoint = {
+  x: number;
+  y: number;
+};
+
+export type DoodlePoint = {
   x: number;
   y: number;
 };
@@ -160,7 +166,14 @@ export type DecorationLayer = LayerBase & {
   fill: string;
 };
 
-export type EditorLayer = ImageLayer | TextLayer | DecorationLayer;
+export type DoodleLayer = LayerBase & {
+  type: "doodle";
+  points: DoodlePoint[];
+  stroke: string;
+  strokeWidth: number;
+};
+
+export type EditorLayer = ImageLayer | TextLayer | DecorationLayer | DoodleLayer;
 
 export type CanvasViewport = {
   zoom: number;
@@ -211,9 +224,10 @@ export type EditorDocument = {
 };
 
 export const layerTypeLabels: Record<LayerType, string> = {
-  image: "图片层",
-  text: "花字层",
-  decoration: "装饰层"
+  image: "图片图层",
+  text: "文字图层",
+  decoration: "装饰图层",
+  doodle: "涂鸦图层"
 };
 
 export const textTemplatePresets: Array<{
@@ -225,9 +239,9 @@ export const textTemplatePresets: Array<{
 }> = [
   {
     id: "title",
-    label: "主标题花字",
-    content: "爆款卖点一眼看见",
-    name: "主标题花字",
+    label: "标题大字",
+    content: "爆款主标题",
+    name: "标题大字",
     style: {
       fontSize: 88,
       fontWeight: 800,
@@ -240,9 +254,9 @@ export const textTemplatePresets: Array<{
   },
   {
     id: "price",
-    label: "价格角标",
+    label: "价格贴片",
     content: "到手价 59",
-    name: "价格角标",
+    name: "价格贴片",
     style: {
       fontSize: 72,
       fontWeight: 800,
@@ -255,9 +269,9 @@ export const textTemplatePresets: Array<{
   },
   {
     id: "coupon",
-    label: "优惠券标签",
+    label: "优惠券文案",
     content: "领券立减 30",
-    name: "优惠券标签",
+    name: "优惠券文案",
     style: {
       fontSize: 54,
       fontWeight: 700,
@@ -270,9 +284,9 @@ export const textTemplatePresets: Array<{
   },
   {
     id: "highlight",
-    label: "卖点高亮条",
-    content: "限时加赠 热卖推荐",
-    name: "卖点高亮条",
+    label: "重点高亮条",
+    content: "限时加赠 今日生效",
+    name: "重点高亮条",
     style: {
       fontSize: 46,
       fontWeight: 700,
@@ -293,8 +307,8 @@ export const imageFilterPresets: Array<{
 }> = [
   {
     id: "beauty",
-    label: "美妆通透",
-    description: "提亮肤感和产品高光，适合美妆护肤主图。",
+    label: "通透美妆",
+    description: "提亮肤色，增强通透感，适合美妆和人像商品图。",
     filters: {
       brightness: 0.08,
       contrast: 0.12,
@@ -306,8 +320,8 @@ export const imageFilterPresets: Array<{
   },
   {
     id: "food",
-    label: "食品诱人",
-    description: "加强食物层次和暖色食欲感，适合零食与餐饮。",
+    label: "食欲增强",
+    description: "提升暖调和饱和度，让食物更有新鲜感和食欲感。",
     filters: {
       brightness: 0.06,
       contrast: 0.18,
@@ -319,8 +333,8 @@ export const imageFilterPresets: Array<{
   },
   {
     id: "fashion",
-    label: "服饰质感",
-    description: "增强材质纹理与边缘锐度，适合服饰上新图。",
+    label: "时尚清冷",
+    description: "压住杂色并提高锐度，适合服饰箱包等偏质感素材。",
     filters: {
       brightness: 0.02,
       contrast: 0.16,
@@ -332,8 +346,8 @@ export const imageFilterPresets: Array<{
   },
   {
     id: "home",
-    label: "家居温润",
-    description: "保持空间柔和感和清洁度，适合家居生活方式图。",
+    label: "居家柔和",
+    description: "轻微柔化与暖调提亮，适合家居和生活方式场景。",
     filters: {
       brightness: 0.05,
       contrast: 0.08,
@@ -354,7 +368,7 @@ export const enhanceProfiles: Array<{
   {
     id: "auto",
     label: "一键增强",
-    description: "自动提升主体清晰度、对比度和投放观感。",
+    description: "自动补足基础亮度、对比度和锐度，适合作为起手增强。",
     filters: {
       brightness: 0.07,
       contrast: 0.14,
@@ -428,6 +442,13 @@ export function createDefaultTextStyle(): TextLayer["style"] {
   };
 }
 
+export function createDefaultDoodleStyle() {
+  return {
+    stroke: "#cd5c2d",
+    strokeWidth: 14
+  };
+}
+
 export function createDefaultImageFilters(): ImageFilters {
   return {
     brightness: 0,
@@ -459,8 +480,8 @@ export function createDefaultImageMask(): ImageMask {
 
 export function createDefaultImageAiMeta(): ImageAiMeta {
   return {
-    prompt: "保留主体和商品信息，修复蒙版区域中的瑕疵或杂物，让画面更干净适合电商投放。",
-    expandPrompt: "向外自然延展背景，保持主体、光感和风格一致，适配新的投放比例。",
+    prompt: "去掉瑕疵和干扰元素，保持商品主体、光影和画面风格自然一致。",
+    expandPrompt: "在延展画面的同时保持主体位置、背景氛围和整体光线一致。",
     lastAiAction: null,
     lastAiRequestedAt: null,
     lastAiSucceededAt: null,
@@ -473,7 +494,7 @@ export function createInitialDocument(): EditorDocument {
 
   return {
     id: "doc-editor-mvp",
-    name: "AIGC 带货图精修",
+    name: "AIGC 修图工作台",
     canvas: {
       presetId: preset.id,
       width: preset.width,
@@ -509,7 +530,7 @@ export function createInitialDocument(): EditorDocument {
       {
         id: "layer-text-title",
         type: "text",
-        name: "主标题花字",
+        name: "标题大字",
         visible: true,
         locked: false,
         opacity: 1,
@@ -523,14 +544,14 @@ export function createInitialDocument(): EditorDocument {
           flipX: false,
           flipY: false
         },
-        content: "新品卖点一眼看见",
+        content: "爆款主标题",
         textTemplateId: "title",
         style: createDefaultTextStyle()
       },
       {
         id: "layer-decoration-badge",
         type: "decoration",
-        name: "价格角标",
+        name: "价格贴片",
         visible: true,
         locked: false,
         opacity: 1,

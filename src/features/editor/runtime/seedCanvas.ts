@@ -2,7 +2,7 @@ import {
   Canvas,
   FabricImage,
   Gradient,
-  Group,
+  Polyline,
   Rect,
   Shadow,
   Textbox,
@@ -11,14 +11,20 @@ import {
 } from "fabric";
 import type {
   DecorationLayer,
+  DoodleLayer,
   EditorDocument,
   EditorLayer,
+  ImageCrop,
   ImageLayer,
   TextLayer
 } from "../model/document";
 
 type SeedCanvasOptions = {
   showSafeArea?: boolean;
+  cropPreview?: {
+    layerId: string;
+    draft: ImageCrop;
+  } | null;
 };
 
 type LayerObject = FabricObject & {
@@ -75,84 +81,26 @@ function createSafeArea(document: EditorDocument) {
 function createImagePlaceholder(layer: ImageLayer) {
   const width = layer.crop.width;
   const height = layer.crop.height;
-  const panel = new Rect({
-    left: 0,
-    top: 0,
-    width,
-    height,
-    rx: 28,
-    ry: 28,
-    fill: "#f4eadc",
-    stroke: "#d8c4a7",
-    strokeWidth: 2
-  });
-  const title = new Textbox("导入 AIGC 初稿", {
-    left: 34,
-    top: 34,
-    width: Math.max(width - 68, 160),
-    fontSize: 34,
-    fill: "#1c2520",
-    fontFamily: "Avenir Next",
-    fontWeight: 700
-  });
-  const desc = new Textbox(
-    "这里会显示导入的商品图或海报初稿。当前版本支持裁剪、电商滤镜、AI 局部修复、AI 扩图和导出成品。",
-    {
-      left: 34,
-      top: 100,
-      width: Math.max(width - 68, 160),
-      fontSize: 20,
-      lineHeight: 1.5,
-      fill: "#5b6a61",
-      fontFamily: "Avenir Next"
-    }
-  );
 
-  return new Group([panel, title, desc], {
+  return new Textbox("导入图片后开始编辑", {
     left: layer.transform.x,
-    top: layer.transform.y
+    top: layer.transform.y,
+    width: Math.max(width, 220),
+    fontSize: 28,
+    fill: "#5b6a61",
+    fontFamily: "Avenir Next",
+    fontWeight: 600
   });
 }
 
 function buildSharpenMatrix(intensity: number) {
-  return [
-    0,
-    -intensity,
-    0,
-    -intensity,
-    1 + intensity * 4,
-    -intensity,
-    0,
-    -intensity,
-    0
-  ];
+  return [0, -intensity, 0, -intensity, 1 + intensity * 4, -intensity, 0, -intensity, 0];
 }
 
 function buildTemperatureMatrix(temperature: number) {
   const shift = Math.round(temperature * 40);
 
-  return [
-    1,
-    0,
-    0,
-    0,
-    shift,
-    0,
-    1,
-    0,
-    0,
-    0,
-    0,
-    0,
-    1,
-    0,
-    -shift,
-    0,
-    0,
-    0,
-    1,
-    0
-  ];
+  return [1, 0, 0, 0, shift, 0, 1, 0, 0, 0, 0, 0, 1, 0, -shift, 0, 0, 0, 1, 0];
 }
 
 function applyImageFilters(image: FabricImage, layer: ImageLayer) {
@@ -175,38 +123,44 @@ function applyImageFilters(image: FabricImage, layer: ImageLayer) {
   }
 
   if (layer.filters.sharpen !== 0) {
-    nextFilters.push(
-      new filters.Convolute({
-        matrix: buildSharpenMatrix(layer.filters.sharpen)
-      })
-    );
+    nextFilters.push(new filters.Convolute({ matrix: buildSharpenMatrix(layer.filters.sharpen) }));
   }
 
   if (layer.filters.temperature !== 0) {
-    nextFilters.push(
-      new filters.ColorMatrix({
-        matrix: buildTemperatureMatrix(layer.filters.temperature)
-      })
-    );
+    nextFilters.push(new filters.ColorMatrix({ matrix: buildTemperatureMatrix(layer.filters.temperature) }));
   }
 
   image.filters = nextFilters;
   image.applyFilters();
 }
 
-async function createImageObject(layer: ImageLayer) {
+async function createImageObject(
+  layer: ImageLayer,
+  cropPreview?: SeedCanvasOptions["cropPreview"]
+) {
   if (layer.source === "pending-upload") {
     return createImagePlaceholder(layer);
   }
 
   const image = await FabricImage.fromURL(layer.source);
+  const previewingCurrentLayer = cropPreview && cropPreview.layerId === layer.id;
 
-  image.set({
-    cropX: layer.crop.x,
-    cropY: layer.crop.y,
-    width: layer.crop.width,
-    height: layer.crop.height
-  });
+  if (previewingCurrentLayer) {
+    image.set({
+      cropX: 0,
+      cropY: 0,
+      width: layer.originalWidth,
+      height: layer.originalHeight
+    });
+  } else {
+    image.set({
+      cropX: layer.crop.x,
+      cropY: layer.crop.y,
+      width: layer.crop.width,
+      height: layer.crop.height
+    });
+  }
+
   applyImageFilters(image, layer);
 
   return image;
@@ -254,13 +208,24 @@ function createDecorationObject(layer: DecorationLayer) {
   });
 }
 
+function createDoodleObject(layer: DoodleLayer) {
+  return new Polyline(layer.points, {
+    fill: "",
+    stroke: layer.stroke,
+    strokeWidth: layer.strokeWidth,
+    strokeLineCap: "round",
+    strokeLineJoin: "round",
+    objectCaching: false
+  });
+}
+
 export async function seedCanvas(
   canvas: Canvas,
   document: EditorDocument,
   selectedLayerIds: string[],
   options: SeedCanvasOptions = {}
 ) {
-  const { showSafeArea = true } = options;
+  const { showSafeArea = true, cropPreview = null } = options;
 
   canvas.clear();
   canvas.setDimensions({
@@ -269,17 +234,6 @@ export async function seedCanvas(
   });
   canvas.backgroundColor = document.canvas.backgroundColor;
 
-  const board = new Rect({
-    left: 0,
-    top: 0,
-    width: document.canvas.width,
-    height: document.canvas.height,
-    fill: document.canvas.backgroundColor,
-    selectable: false,
-    evented: false
-  });
-
-  canvas.add(board);
   if (showSafeArea) {
     canvas.add(createSafeArea(document));
   }
@@ -294,9 +248,11 @@ export async function seedCanvas(
     let object: FabricObject;
 
     if (layer.type === "image") {
-      object = await createImageObject(layer);
+      object = await createImageObject(layer, cropPreview);
     } else if (layer.type === "text") {
       object = createTextObject(layer);
+    } else if (layer.type === "doodle") {
+      object = createDoodleObject(layer);
     } else {
       object = createDecorationObject(layer);
     }

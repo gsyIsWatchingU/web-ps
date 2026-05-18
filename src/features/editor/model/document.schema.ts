@@ -125,6 +125,18 @@ const decorationLayerSchema = layerBaseSchema.extend({
   fill: z.string()
 });
 
+const doodleLayerSchema = layerBaseSchema.extend({
+  type: z.literal("doodle"),
+  points: z.array(
+    z.object({
+      x: z.number(),
+      y: z.number()
+    })
+  ),
+  stroke: z.string(),
+  strokeWidth: z.number().positive()
+});
+
 export const editorDocumentSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -144,7 +156,8 @@ export const editorDocumentSchema = z.object({
     z.discriminatedUnion("type", [
       imageLayerSchema,
       textLayerSchema,
-      decorationLayerSchema
+      decorationLayerSchema,
+      doodleLayerSchema
     ])
   ),
   exportConfig: z.object({

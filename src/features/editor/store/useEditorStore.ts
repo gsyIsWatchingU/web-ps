@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import {
+  createDefaultDoodleStyle,
   createDefaultImageAiMeta,
   createDefaultImageFilters,
   createDefaultImageMask,
@@ -16,6 +17,8 @@ import {
   type CanvasPresetId,
   type CanvasViewport,
   type DecorationLayer,
+  type DoodleLayer,
+  type DoodlePoint,
   type EditorDocument,
   type EditorLayer,
   type EditorTool,
@@ -43,10 +46,16 @@ type AsyncResult = {
   errorMessage: string | null;
 };
 
+type CropSession = {
+  layerId: string;
+  draft: ImageCrop;
+} | null;
+
 type EditorStore = {
   activeTool: EditorTool;
   selectedLayerIds: string[];
   document: EditorDocument;
+  cropSession: CropSession;
   historyPast: HistoryEntry[];
   historyFuture: HistoryEntry[];
   setActiveTool: (tool: EditorTool) => void;
@@ -57,6 +66,7 @@ type EditorStore = {
   importImage: (file: File) => Promise<void>;
   addTextLayer: () => void;
   addDecorationLayer: () => void;
+  addDoodleLayer: (points: DoodlePoint[]) => void;
   applyTextTemplate: (layerId: string, templateId: TextTemplateId) => void;
   updateLayerName: (layerId: string, name: string) => void;
   toggleLayerVisibility: (layerId: string) => void;
@@ -81,6 +91,10 @@ type EditorStore = {
   resetImageCrop: (layerId: string) => void;
   updateDecorationShape: (layerId: string, shape: DecorationLayer["shape"]) => void;
   updateDecorationFill: (layerId: string, fill: string) => void;
+  updateDoodleStyle: (
+    layerId: string,
+    style: Partial<Pick<DoodleLayer, "stroke" | "strokeWidth" | "opacity">>
+  ) => void;
   updateExportConfig: (config: Partial<EditorDocument["exportConfig"]>) => void;
   recordWorkflowExport: () => void;
   markWorkflowApplied: () => void;
@@ -96,6 +110,10 @@ type EditorStore = {
   ) => void;
   appendMaskPoint: (layerId: string, point: MaskPoint) => void;
   finishMaskStroke: (layerId: string) => void;
+  startCropSession: (layerId: string) => void;
+  updateCropSession: (crop: Partial<ImageCrop>) => void;
+  commitCropSession: () => void;
+  cancelCropSession: () => void;
   applyAiRepair: (layerId: string) => Promise<AsyncResult>;
   applyAiExtend: (layerId: string, presetId: CanvasPresetId) => Promise<AsyncResult>;
   undo: () => void;
@@ -239,19 +257,33 @@ function loadInitialDocument() {
 
     const parsed = editorDocumentSchema.parse(JSON.parse(raw));
 
-    return {
+    return stripTransientDocumentState({
       ...parsed,
       workflowMeta: {
         ...parsed.workflowMeta,
         sceneTag: getCanvasPreset(parsed.canvas.presetId).scene
       }
-    };
+    });
   } catch {
     return editorDocumentSchema.parse(fallback);
   }
 }
 
 const initialDocument = loadInitialDocument();
+
+function stripTransientDocumentState(document: EditorDocument): EditorDocument {
+  return {
+    ...document,
+    layers: document.layers.map((layer) =>
+      layer.type === "image"
+        ? {
+            ...layer,
+            mask: createDefaultImageMask()
+          }
+        : layer
+    )
+  };
+}
 
 function buildImageTransform(
   canvasWidth: number,
@@ -327,6 +359,68 @@ function buildCropFromAspect(layer: ImageLayer, aspectRatio: number | null) {
   } satisfies ImageCrop;
 }
 
+function sanitizeImageCrop(layer: ImageLayer, crop: Partial<ImageCrop>) {
+  const nextCrop = {
+    ...layer.crop,
+    ...crop
+  };
+  const width = clamp(Math.round(nextCrop.width), 1, layer.originalWidth - nextCrop.x);
+  const height = clamp(Math.round(nextCrop.height), 1, layer.originalHeight - nextCrop.y);
+  const x = clamp(Math.round(nextCrop.x), 0, layer.originalWidth - width);
+  const y = clamp(Math.round(nextCrop.y), 0, layer.originalHeight - height);
+
+  return {
+    x,
+    y,
+    width,
+    height
+  } satisfies ImageCrop;
+}
+
+function createDoodleLayer(
+  points: DoodlePoint[],
+  zIndex: number
+): DoodleLayer | null {
+  if (points.length < 2) {
+    return null;
+  }
+
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const width = Math.max(maxX - minX, 1);
+  const height = Math.max(maxY - minY, 1);
+  const style = createDefaultDoodleStyle();
+
+  return {
+    id: createLayerId("doodle"),
+    type: "doodle",
+    name: "涂鸦标记",
+    visible: true,
+    locked: false,
+    opacity: 1,
+    zIndex,
+    transform: {
+      x: Math.round(minX),
+      y: Math.round(minY),
+      scaleX: 1,
+      scaleY: 1,
+      rotation: 0,
+      flipX: false,
+      flipY: false
+    },
+    points: points.map((point) => ({
+      x: point.x - minX,
+      y: point.y - minY
+    })),
+    stroke: style.stroke,
+    strokeWidth: style.strokeWidth
+  };
+}
+
 function getLayerSize(layer: EditorLayer) {
   if (layer.type === "image") {
     return {
@@ -339,6 +433,16 @@ function getLayerSize(layer: EditorLayer) {
     return {
       width: 560 * layer.transform.scaleX,
       height: layer.style.fontSize * 1.8 * layer.transform.scaleY
+    };
+  }
+
+  if (layer.type === "doodle") {
+    const maxX = Math.max(...layer.points.map((point) => point.x), 1);
+    const maxY = Math.max(...layer.points.map((point) => point.y), 1);
+
+    return {
+      width: maxX * layer.transform.scaleX,
+      height: maxY * layer.transform.scaleY
     };
   }
 
@@ -486,9 +590,14 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   activeTool: "select",
   selectedLayerIds: [initialDocument.layers[1]?.id ?? initialDocument.layers[0].id],
   document: initialDocument,
+  cropSession: null,
   historyPast: [],
   historyFuture: [],
-  setActiveTool: (tool) => set({ activeTool: tool }),
+  setActiveTool: (tool) =>
+    set((state) => ({
+      activeTool: tool,
+      cropSession: tool === "crop" ? state.cropSession : null
+    })),
   setCanvasPreset: (presetId) =>
     set((state) => {
       const preset = getCanvasPreset(presetId);
@@ -633,6 +742,23 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         touchDocument(state.document, normalized),
         [nextLayer.id],
         { activeTool: "shape" }
+      );
+    }),
+  addDoodleLayer: (points) =>
+    set((state) => {
+      const nextLayer = createDoodleLayer(points, state.document.layers.length);
+
+      if (!nextLayer) {
+        return state;
+      }
+
+      const normalized = normalizeLayerOrder([...state.document.layers, nextLayer]);
+
+      return commitDocumentChange(
+        state,
+        touchDocument(state.document, normalized),
+        [nextLayer.id],
+        { activeTool: "select" }
       );
     }),
   applyTextTemplate: (layerId, templateId) =>
@@ -945,38 +1071,14 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       commitDocumentChange(
         state,
         updateLayers(state.document, (layers) =>
-          layers.map((layer) => {
-            if (layer.id !== layerId || layer.type !== "image") {
-              return layer;
-            }
-
-            const nextCrop = {
-              ...layer.crop,
-              ...crop
-            };
-            const width = clamp(
-              Math.round(nextCrop.width),
-              1,
-              layer.originalWidth - nextCrop.x
-            );
-            const height = clamp(
-              Math.round(nextCrop.height),
-              1,
-              layer.originalHeight - nextCrop.y
-            );
-            const x = clamp(Math.round(nextCrop.x), 0, layer.originalWidth - width);
-            const y = clamp(Math.round(nextCrop.y), 0, layer.originalHeight - height);
-
-            return {
-              ...layer,
-              crop: {
-                x,
-                y,
-                width,
-                height
-              }
-            };
-          })
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "image"
+              ? {
+                  ...layer,
+                  crop: sanitizeImageCrop(layer, crop)
+                }
+              : layer
+          )
         )
       )
     ),
@@ -1006,6 +1108,24 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
               ? {
                   ...layer,
                   crop: createImageCrop(layer.originalWidth, layer.originalHeight)
+                }
+              : layer
+          )
+        )
+      )
+    ),
+  updateDoodleStyle: (layerId, style) =>
+    set((state) =>
+      commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "doodle"
+              ? {
+                  ...layer,
+                  stroke: style.stroke ?? layer.stroke,
+                  strokeWidth: style.strokeWidth ?? layer.strokeWidth,
+                  opacity: style.opacity ?? layer.opacity
                 }
               : layer
           )
@@ -1242,6 +1362,82 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
             : layer
         )
       )
+    })),
+  startCropSession: (layerId) =>
+    set((state) => {
+      const layer = state.document.layers.find(
+        (entry): entry is ImageLayer => entry.id === layerId && entry.type === "image"
+      );
+
+      if (!layer) {
+        return {
+          cropSession: null
+        };
+      }
+
+      return {
+        cropSession: {
+          layerId,
+          draft: { ...layer.crop }
+        }
+      };
+    }),
+  updateCropSession: (crop) =>
+    set((state) => {
+      if (!state.cropSession) {
+        return state;
+      }
+
+      const layer = state.document.layers.find(
+        (entry): entry is ImageLayer =>
+          entry.id === state.cropSession?.layerId && entry.type === "image"
+      );
+
+      if (!layer) {
+        return {
+          cropSession: null
+        };
+      }
+
+      return {
+        cropSession: {
+          ...state.cropSession,
+          draft: sanitizeImageCrop(layer, {
+            ...state.cropSession.draft,
+            ...crop
+          })
+        }
+      };
+    }),
+  commitCropSession: () =>
+    set((state) => {
+      if (!state.cropSession) {
+        return state;
+      }
+
+      return commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) =>
+            layer.id === state.cropSession?.layerId && layer.type === "image"
+              ? {
+                  ...layer,
+                  crop: state.cropSession.draft
+                }
+              : layer
+          )
+        ),
+        state.selectedLayerIds,
+        {
+          cropSession: null,
+          activeTool: "select"
+        }
+      );
+    }),
+  cancelCropSession: () =>
+    set(() => ({
+      cropSession: null,
+      activeTool: "select"
     })),
   applyAiRepair: async (layerId) => {
     const state = get();
@@ -1514,6 +1710,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       return {
         document: cloneDocument(previous.document),
         selectedLayerIds: [...previous.selectedLayerIds],
+        cropSession: null,
         historyPast: state.historyPast.slice(0, -1),
         historyFuture: [
           createHistoryEntry(state.document, state.selectedLayerIds),
@@ -1532,6 +1729,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       return {
         document: cloneDocument(next.document),
         selectedLayerIds: [...next.selectedLayerIds],
+        cropSession: null,
         historyPast: trimHistory([
           ...state.historyPast.map(cloneHistoryEntry),
           createHistoryEntry(state.document, state.selectedLayerIds)
