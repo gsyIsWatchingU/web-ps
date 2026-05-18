@@ -1,5 +1,5 @@
 import { Canvas } from "fabric";
-import { useEffect, useRef, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type {
   CanvasBackgroundMode,
   DoodlePoint,
@@ -55,11 +55,8 @@ type LayerCanvasObject = {
   angle?: number;
   flipX?: boolean;
   flipY?: boolean;
-  data?: {
-    layerId?: string;
-  };
+  data?: { layerId?: string };
   text?: string;
-  isEditing?: boolean;
 };
 
 type CropHandle = "move" | "n" | "e" | "s" | "w" | "nw" | "ne" | "sw" | "se" | null;
@@ -94,11 +91,7 @@ function syncCanvasInteractionMode(runtime: Canvas, activeTool: EditorTool, isPa
   const directManipulation = isDirectManipulationTool(activeTool);
 
   runtime.selection = !directManipulation && !isPanning;
-  runtime.defaultCursor = directManipulation
-    ? "crosshair"
-    : isPanning
-      ? "grabbing"
-      : "default";
+  runtime.defaultCursor = directManipulation ? "crosshair" : isPanning ? "grabbing" : "default";
   runtime.hoverCursor = runtime.defaultCursor;
 }
 
@@ -109,10 +102,7 @@ function getCanvasSurfaceStyle(document: EditorDocument): CSSProperties {
   };
 
   if (background.mode === "solid") {
-    return {
-      backgroundColor: background.color,
-      backgroundImage: "none"
-    };
+    return { backgroundColor: background.color, backgroundImage: "none" };
   }
 
   if (background.mode === "dots") {
@@ -134,23 +124,14 @@ function getCanvasSurfaceStyle(document: EditorDocument): CSSProperties {
 
 function getPointerClientPosition(event: MouseEvent | TouchEvent) {
   if ("touches" in event && event.touches.length > 0) {
-    return {
-      x: event.touches[0].clientX,
-      y: event.touches[0].clientY
-    };
+    return { x: event.touches[0].clientX, y: event.touches[0].clientY };
   }
 
   if ("changedTouches" in event && event.changedTouches.length > 0) {
-    return {
-      x: event.changedTouches[0].clientX,
-      y: event.changedTouches[0].clientY
-    };
+    return { x: event.changedTouches[0].clientX, y: event.changedTouches[0].clientY };
   }
 
-  return {
-    x: (event as MouseEvent).clientX,
-    y: (event as MouseEvent).clientY
-  };
+  return { x: (event as MouseEvent).clientX, y: (event as MouseEvent).clientY };
 }
 
 function mapClientPointToDocument(
@@ -165,7 +146,7 @@ function mapClientPointToDocument(
   };
 }
 
-function mapDocumentPointToImage(docPoint: { x: number; y: number }, layer: ImageLayer) {
+function mapDocumentPointToImage(docPoint: DoodlePoint, layer: ImageLayer, clampInside = false) {
   const width = layer.crop.width * layer.transform.scaleX;
   const height = layer.crop.height * layer.transform.scaleY;
 
@@ -176,27 +157,13 @@ function mapDocumentPointToImage(docPoint: { x: number; y: number }, layer: Imag
   const normalizedX = (docPoint.x - layer.transform.x) / width;
   const normalizedY = (docPoint.y - layer.transform.y) / height;
 
-  if (normalizedX < 0 || normalizedY < 0 || normalizedX > 1 || normalizedY > 1) {
+  if (!clampInside && (normalizedX < 0 || normalizedY < 0 || normalizedX > 1 || normalizedY > 1)) {
     return null;
   }
 
   return {
-    x: normalizedX,
-    y: normalizedY
-  } satisfies MaskPoint;
-}
-
-function mapDocumentPointToImageClamped(docPoint: { x: number; y: number }, layer: ImageLayer) {
-  const width = layer.crop.width * layer.transform.scaleX;
-  const height = layer.crop.height * layer.transform.scaleY;
-
-  if (width <= 0 || height <= 0) {
-    return null;
-  }
-
-  return {
-    x: clamp((docPoint.x - layer.transform.x) / width),
-    y: clamp((docPoint.y - layer.transform.y) / height)
+    x: clampInside ? clamp(normalizedX) : normalizedX,
+    y: clampInside ? clamp(normalizedY) : normalizedY
   } satisfies MaskPoint;
 }
 
@@ -226,6 +193,55 @@ function buildRectangleMaskPoints(start: MaskPoint, end: MaskPoint) {
   ] satisfies MaskPoint[];
 }
 
+function buildScanlineFill(points: MaskPoint[], layer: ImageLayer) {
+  if (points.length < 3) {
+    return points;
+  }
+
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const minY = Math.max(0, Math.min(...ys));
+  const maxY = Math.min(1, Math.max(...ys));
+  const brushStep = clamp((layer.mask.brushSize / Math.max(layer.crop.height, 1)) * 0.55, 0.003, 0.04);
+  const filled: MaskPoint[] = [];
+  let leftToRight = true;
+
+  for (let y = minY; y <= maxY; y += brushStep) {
+    const intersections: number[] = [];
+
+    for (let index = 0; index < points.length; index += 1) {
+      const current = points[index];
+      const next = points[(index + 1) % points.length];
+
+      if ((current.y <= y && next.y > y) || (next.y <= y && current.y > y)) {
+        const ratio = (y - current.y) / (next.y - current.y);
+        intersections.push(current.x + ratio * (next.x - current.x));
+      }
+    }
+
+    intersections.sort((left, right) => left - right);
+
+    for (let index = 0; index < intersections.length - 1; index += 2) {
+      const x1 = clamp(intersections[index]);
+      const x2 = clamp(intersections[index + 1]);
+
+      if (Math.abs(x2 - x1) < 0.002) {
+        continue;
+      }
+
+      if (leftToRight) {
+        filled.push({ x: x1, y }, { x: x2, y });
+      } else {
+        filled.push({ x: x2, y }, { x: x1, y });
+      }
+
+      leftToRight = !leftToRight;
+    }
+  }
+
+  return filled.length > 1 ? filled : points;
+}
+
 function getCropPreviewBounds(layer: ImageLayer, crop: ImageCrop) {
   return {
     imageX: layer.transform.x,
@@ -239,10 +255,7 @@ function getCropPreviewBounds(layer: ImageLayer, crop: ImageCrop) {
   };
 }
 
-function resolveCropHandle(
-  docPoint: DoodlePoint,
-  bounds: ReturnType<typeof getCropPreviewBounds>
-): CropHandle {
+function resolveCropHandle(docPoint: DoodlePoint, bounds: ReturnType<typeof getCropPreviewBounds>): CropHandle {
   const edgeTolerance = 12;
   const cornerTolerance = 14;
   const withinX = docPoint.x >= bounds.cropX && docPoint.x <= bounds.cropX + bounds.cropWidth;
@@ -324,35 +337,12 @@ function drawMaskOverlay(
   context.setTransform(viewport.zoom, 0, 0, viewport.zoom, viewport.panX, viewport.panY);
 
   for (const stroke of layer.mask.strokes) {
-    if (stroke.points.length === 0) {
-      continue;
-    }
-
     if (stroke.points.length > 2) {
       drawMaskPolygon(context, layer, stroke.points, {
-        fill: stroke.mode === "paint" ? "rgba(205, 92, 45, 0.28)" : "rgba(255, 255, 255, 0.7)",
-        stroke: stroke.mode === "paint" ? "rgba(205, 92, 45, 0.88)" : "rgba(255, 255, 255, 0.92)"
+        fill: "rgba(205, 92, 45, 0.28)",
+        stroke: "rgba(205, 92, 45, 0.88)"
       });
-      continue;
     }
-
-    context.beginPath();
-    context.lineCap = "round";
-    context.lineJoin = "round";
-    context.strokeStyle = "rgba(205, 92, 45, 0.38)";
-    context.lineWidth = stroke.size * layer.transform.scaleX;
-
-    stroke.points.forEach((point, index) => {
-      const mapped = toDocumentMaskPoint(point, layer);
-
-      if (index === 0) {
-        context.moveTo(mapped.x, mapped.y);
-      } else {
-        context.lineTo(mapped.x, mapped.y);
-      }
-    });
-
-    context.stroke();
   }
 
   if (draft && draft.points.length > 1) {
@@ -382,7 +372,6 @@ function drawDoodlePreview(
   context.lineJoin = "round";
   context.strokeStyle = "#cd5c2d";
   context.lineWidth = 14;
-
   points.forEach((point, index) => {
     if (index === 0) {
       context.moveTo(point.x, point.y);
@@ -390,7 +379,6 @@ function drawDoodlePreview(
       context.lineTo(point.x, point.y);
     }
   });
-
   context.stroke();
   context.restore();
 }
@@ -402,43 +390,15 @@ function drawCropOverlay(
   viewport: EditorDocument["canvas"]["viewport"]
 ) {
   const bounds = getCropPreviewBounds(layer, crop);
-  const handleLength = 18;
-  const handleThickness = 6;
 
   context.save();
   context.setTransform(viewport.zoom, 0, 0, viewport.zoom, viewport.panX, viewport.panY);
-
   context.fillStyle = "rgba(28, 37, 32, 0.28)";
   context.fillRect(bounds.imageX, bounds.imageY, bounds.imageWidth, bounds.imageHeight);
   context.clearRect(bounds.cropX, bounds.cropY, bounds.cropWidth, bounds.cropHeight);
-
   context.strokeStyle = "#cd5c2d";
   context.lineWidth = 2;
   context.strokeRect(bounds.cropX, bounds.cropY, bounds.cropWidth, bounds.cropHeight);
-
-  const handles = [
-    { x: bounds.cropX, y: bounds.cropY, width: handleLength, height: handleThickness, rotation: 45 },
-    { x: bounds.cropX + bounds.cropWidth, y: bounds.cropY, width: handleLength, height: handleThickness, rotation: -45 },
-    { x: bounds.cropX, y: bounds.cropY + bounds.cropHeight, width: handleLength, height: handleThickness, rotation: -45 },
-    { x: bounds.cropX + bounds.cropWidth, y: bounds.cropY + bounds.cropHeight, width: handleLength, height: handleThickness, rotation: 45 },
-    { x: bounds.cropX + bounds.cropWidth / 2, y: bounds.cropY, width: handleLength, height: handleThickness, rotation: 0 },
-    { x: bounds.cropX + bounds.cropWidth / 2, y: bounds.cropY + bounds.cropHeight, width: handleLength, height: handleThickness, rotation: 0 },
-    { x: bounds.cropX, y: bounds.cropY + bounds.cropHeight / 2, width: handleThickness, height: handleLength, rotation: 0 },
-    { x: bounds.cropX + bounds.cropWidth, y: bounds.cropY + bounds.cropHeight / 2, width: handleThickness, height: handleLength, rotation: 0 }
-  ];
-
-  context.fillStyle = "#fffaf3";
-  handles.forEach((handle) => {
-    context.save();
-    context.translate(handle.x, handle.y);
-    context.rotate((handle.rotation * Math.PI) / 180);
-    context.beginPath();
-    context.rect(-handle.width / 2, -handle.height / 2, handle.width, handle.height);
-    context.fill();
-    context.stroke();
-    context.restore();
-  });
-
   context.restore();
 }
 
@@ -459,13 +419,14 @@ export function CanvasViewport({
   onDoodleCommit,
   onCropSessionChange
 }: CanvasViewportProps) {
+  const [localMaskSelectionMode, setLocalMaskSelectionMode] = useState<MaskSelectionMode>(maskSelectionMode);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const runtimeRef = useRef<Canvas | null>(null);
   const suppressSyncRef = useRef(false);
   const activeToolRef = useRef(activeTool);
   const documentRef = useRef(document);
-  const maskSelectionModeRef = useRef(maskSelectionMode);
+  const maskSelectionModeRef = useRef(localMaskSelectionMode);
   const selectedImageLayerRef = useRef(selectedImageLayer);
   const cropSessionRef = useRef(cropSession);
   const onSelectionChangeRef = useRef(onSelectionChange);
@@ -477,22 +438,12 @@ export function CanvasViewport({
   const onMaskFinishRef = useRef(onMaskFinish);
   const onDoodleCommitRef = useRef(onDoodleCommit);
   const onCropSessionChangeRef = useRef(onCropSessionChange);
-  const panSessionRef = useRef({
-    isPanning: false,
-    lastX: 0,
-    lastY: 0
-  });
-  const drawSessionRef = useRef({
-    mode: null as "mask" | "doodle" | "crop" | null
-  });
+  const panSessionRef = useRef({ isPanning: false, lastX: 0, lastY: 0 });
+  const drawSessionRef = useRef({ mode: null as "mask" | "doodle" | "crop" | null });
   const maskDraftRef = useRef<MaskDraft>(null);
   const maskStartPointRef = useRef<MaskPoint | null>(null);
   const doodlePointsRef = useRef<DoodlePoint[]>([]);
-  const cropDragRef = useRef<{
-    handle: CropHandle;
-    startPoint: DoodlePoint;
-    startCrop: ImageCrop | null;
-  }>({
+  const cropDragRef = useRef<{ handle: CropHandle; startPoint: DoodlePoint; startCrop: ImageCrop | null }>({
     handle: null,
     startPoint: { x: 0, y: 0 },
     startCrop: null
@@ -511,7 +462,13 @@ export function CanvasViewport({
       return;
     }
 
-    const [firstPoint, ...restPoints] = draft.points;
+    const filledPoints = buildScanlineFill(draft.points, layer);
+    const [firstPoint, ...restPoints] = filledPoints;
+
+    if (!firstPoint || restPoints.length === 0) {
+      return;
+    }
+
     onMaskStartRef.current(layer.id, "paint", firstPoint);
     restPoints.forEach((point) => onMaskAppendRef.current(layer.id, point));
     onMaskFinishRef.current(layer.id);
@@ -533,12 +490,7 @@ export function CanvasViewport({
     context.clearRect(0, 0, overlay.width, overlay.height);
 
     if (activeToolRef.current === "brush" && selectedImageLayerRef.current) {
-      drawMaskOverlay(
-        context,
-        selectedImageLayerRef.current,
-        documentRef.current.canvas.viewport,
-        maskDraftRef.current
-      );
+      drawMaskOverlay(context, selectedImageLayerRef.current, documentRef.current.canvas.viewport, maskDraftRef.current);
     }
 
     if (activeToolRef.current === "doodle") {
@@ -551,19 +503,14 @@ export function CanvasViewport({
       selectedImageLayerRef.current &&
       cropSessionRef.current.layerId === selectedImageLayerRef.current.id
     ) {
-      drawCropOverlay(
-        context,
-        selectedImageLayerRef.current,
-        cropSessionRef.current.draft,
-        documentRef.current.canvas.viewport
-      );
+      drawCropOverlay(context, selectedImageLayerRef.current, cropSessionRef.current.draft, documentRef.current.canvas.viewport);
     }
   };
 
   useEffect(() => {
     activeToolRef.current = activeTool;
     documentRef.current = document;
-    maskSelectionModeRef.current = maskSelectionMode;
+    maskSelectionModeRef.current = localMaskSelectionMode;
     selectedImageLayerRef.current = selectedImageLayer;
     cropSessionRef.current = cropSession;
     onSelectionChangeRef.current = onSelectionChange;
@@ -580,7 +527,7 @@ export function CanvasViewport({
     activeTool,
     cropSession,
     document,
-    maskSelectionMode,
+    localMaskSelectionMode,
     onCropSessionChange,
     onDoodleCommit,
     onMaskAppend,
@@ -607,12 +554,7 @@ export function CanvasViewport({
     });
 
     runtimeRef.current = runtime;
-    applyViewport(
-      runtime,
-      document.canvas.viewport.zoom,
-      document.canvas.viewport.panX,
-      document.canvas.viewport.panY
-    );
+    applyViewport(runtime, document.canvas.viewport.zoom, document.canvas.viewport.panX, document.canvas.viewport.panY);
 
     const syncSelection = () => {
       if (suppressSyncRef.current || ["brush", "crop", "doodle"].includes(activeToolRef.current)) {
@@ -636,7 +578,6 @@ export function CanvasViewport({
       }
 
       const object = target as LayerCanvasObject;
-
       onTransformChangeRef.current(layerId, {
         x: Math.round(object.left ?? 0),
         y: Math.round(object.top ?? 0),
@@ -648,23 +589,13 @@ export function CanvasViewport({
       });
     };
 
-    const handleObjectModified = (event: { target?: unknown }) => {
-      syncTransform(event.target);
-    };
-
     const commitTextChange = (target: unknown) => {
       const object = target as LayerCanvasObject | undefined;
       const layerId = getLayerId(object);
 
-      if (!layerId || typeof object?.text !== "string") {
-        return;
+      if (layerId && typeof object?.text === "string") {
+        onTextChangeRef.current(layerId, object.text);
       }
-
-      onTextChangeRef.current(layerId, object.text);
-    };
-
-    const handleTextEditingExited = (event: { target?: unknown }) => {
-      commitTextChange(event.target);
     };
 
     const handleMouseDown = (event: { e: MouseEvent | TouchEvent; target?: unknown }) => {
@@ -680,23 +611,14 @@ export function CanvasViewport({
       }
 
       if (currentTool === "select" && !targetLayerId) {
-        panSessionRef.current = {
-          isPanning: true,
-          lastX: pointer.x,
-          lastY: pointer.y
-        };
+        panSessionRef.current = { isPanning: true, lastX: pointer.x, lastY: pointer.y };
         syncCanvasInteractionMode(runtime, currentTool, true);
         runtime.discardActiveObject();
         runtime.requestRenderAll();
         return;
       }
 
-      const docPoint = mapClientPointToDocument(
-        pointer.x,
-        pointer.y,
-        rect,
-        currentDocument.canvas.viewport
-      );
+      const docPoint = mapClientPointToDocument(pointer.x, pointer.y, rect, currentDocument.canvas.viewport);
 
       if (currentTool === "brush" && currentSelectedImageLayer) {
         const imagePoint = mapDocumentPointToImage(docPoint, currentSelectedImageLayer);
@@ -707,10 +629,7 @@ export function CanvasViewport({
 
         drawSessionRef.current.mode = "mask";
         maskStartPointRef.current = imagePoint;
-        maskDraftRef.current = {
-          mode: maskSelectionModeRef.current,
-          points: [imagePoint]
-        };
+        maskDraftRef.current = { mode: maskSelectionModeRef.current, points: [imagePoint] };
         renderOverlay();
         return;
       }
@@ -728,19 +647,14 @@ export function CanvasViewport({
         cropSessionRef.current &&
         cropSessionRef.current.layerId === currentSelectedImageLayer.id
       ) {
-        const bounds = getCropPreviewBounds(currentSelectedImageLayer, cropSessionRef.current.draft);
-        const handle = resolveCropHandle(docPoint, bounds);
+        const handle = resolveCropHandle(docPoint, getCropPreviewBounds(currentSelectedImageLayer, cropSessionRef.current.draft));
 
         if (!handle) {
           return;
         }
 
         drawSessionRef.current.mode = "crop";
-        cropDragRef.current = {
-          handle,
-          startPoint: docPoint,
-          startCrop: cropSessionRef.current.draft
-        };
+        cropDragRef.current = { handle, startPoint: docPoint, startCrop: cropSessionRef.current.draft };
       }
     };
 
@@ -755,12 +669,7 @@ export function CanvasViewport({
         return;
       }
 
-      const docPoint = mapClientPointToDocument(
-        pointer.x,
-        pointer.y,
-        rect,
-        currentDocument.canvas.viewport
-      );
+      const docPoint = mapClientPointToDocument(pointer.x, pointer.y, rect, currentDocument.canvas.viewport);
 
       if (panSessionRef.current.isPanning) {
         const deltaX = pointer.x - panSessionRef.current.lastX;
@@ -777,25 +686,17 @@ export function CanvasViewport({
       }
 
       if (drawSessionRef.current.mode === "mask" && currentTool === "brush" && currentSelectedImageLayer) {
-        const imagePoint = mapDocumentPointToImageClamped(docPoint, currentSelectedImageLayer);
+        const imagePoint = mapDocumentPointToImage(docPoint, currentSelectedImageLayer, true);
         const startPoint = maskStartPointRef.current;
 
         if (!imagePoint || !startPoint) {
           return;
         }
 
-        if (maskSelectionModeRef.current === "rectangle") {
-          maskDraftRef.current = {
-            mode: "rectangle",
-            points: buildRectangleMaskPoints(startPoint, imagePoint)
-          };
-        } else {
-          maskDraftRef.current = {
-            mode: "freeform",
-            points: [...(maskDraftRef.current?.points ?? [startPoint]), imagePoint]
-          };
-        }
-
+        maskDraftRef.current =
+          maskSelectionModeRef.current === "rectangle"
+            ? { mode: "rectangle", points: buildRectangleMaskPoints(startPoint, imagePoint) }
+            : { mode: "freeform", points: [...(maskDraftRef.current?.points ?? [startPoint]), imagePoint] };
         renderOverlay();
         return;
       }
@@ -818,45 +719,18 @@ export function CanvasViewport({
         const startCrop = cropDragRef.current.startCrop;
         const right = startCrop.x + startCrop.width;
         const bottom = startCrop.y + startCrop.height;
-        const nextLeft =
-          cropDragRef.current.handle === "w" ||
-          cropDragRef.current.handle === "nw" ||
-          cropDragRef.current.handle === "sw"
-            ? Math.round(startCrop.x + deltaX)
-            : startCrop.x;
-        const nextTop =
-          cropDragRef.current.handle === "n" ||
-          cropDragRef.current.handle === "nw" ||
-          cropDragRef.current.handle === "ne"
-            ? Math.round(startCrop.y + deltaY)
-            : startCrop.y;
-        const nextRight =
-          cropDragRef.current.handle === "e" ||
-          cropDragRef.current.handle === "ne" ||
-          cropDragRef.current.handle === "se"
-            ? Math.round(right + deltaX)
-            : right;
-        const nextBottom =
-          cropDragRef.current.handle === "s" ||
-          cropDragRef.current.handle === "sw" ||
-          cropDragRef.current.handle === "se"
-            ? Math.round(bottom + deltaY)
-            : bottom;
 
         if (cropDragRef.current.handle === "move") {
-          onCropSessionChangeRef.current({
-            x: Math.round(startCrop.x + deltaX),
-            y: Math.round(startCrop.y + deltaY)
-          });
+          onCropSessionChangeRef.current({ x: Math.round(startCrop.x + deltaX), y: Math.round(startCrop.y + deltaY) });
           return;
         }
 
-        onCropSessionChangeRef.current({
-          x: nextLeft,
-          y: nextTop,
-          width: nextRight - nextLeft,
-          height: nextBottom - nextTop
-        });
+        const nextLeft = ["w", "nw", "sw"].includes(cropDragRef.current.handle) ? Math.round(startCrop.x + deltaX) : startCrop.x;
+        const nextTop = ["n", "nw", "ne"].includes(cropDragRef.current.handle) ? Math.round(startCrop.y + deltaY) : startCrop.y;
+        const nextRight = ["e", "ne", "se"].includes(cropDragRef.current.handle) ? Math.round(right + deltaX) : right;
+        const nextBottom = ["s", "sw", "se"].includes(cropDragRef.current.handle) ? Math.round(bottom + deltaY) : bottom;
+
+        onCropSessionChangeRef.current({ x: nextLeft, y: nextTop, width: nextRight - nextLeft, height: nextBottom - nextTop });
       }
     };
 
@@ -872,7 +746,6 @@ export function CanvasViewport({
       }
 
       event.e.preventDefault();
-
       const viewport = documentRef.current.canvas.viewport;
       const pointerX = event.e.clientX - rect.left;
       const pointerY = event.e.clientY - rect.top;
@@ -886,13 +759,8 @@ export function CanvasViewport({
 
       const nextPanX = pointerX - focusX * nextZoom;
       const nextPanY = pointerY - focusY * nextZoom;
-
       applyViewport(runtime, nextZoom, nextPanX, nextPanY);
-      onViewportChangeRef.current({
-        zoom: Number(nextZoom.toFixed(3)),
-        panX: Math.round(nextPanX),
-        panY: Math.round(nextPanY)
-      });
+      onViewportChangeRef.current({ zoom: Number(nextZoom.toFixed(3)), panX: Math.round(nextPanX), panY: Math.round(nextPanY) });
       renderOverlay();
     };
 
@@ -900,11 +768,7 @@ export function CanvasViewport({
       if (panSessionRef.current.isPanning) {
         panSessionRef.current.isPanning = false;
         const viewportTransform = runtime.viewportTransform ?? [1, 0, 0, 1, 0, 0];
-        onViewportChangeRef.current({
-          zoom: viewportTransform[0] ?? 1,
-          panX: viewportTransform[4] ?? 0,
-          panY: viewportTransform[5] ?? 0
-        });
+        onViewportChangeRef.current({ zoom: viewportTransform[0] ?? 1, panX: viewportTransform[4] ?? 0, panY: viewportTransform[5] ?? 0 });
         syncCanvasInteractionMode(runtime, activeToolRef.current);
       }
 
@@ -920,34 +784,21 @@ export function CanvasViewport({
       maskDraftRef.current = null;
       maskStartPointRef.current = null;
       doodlePointsRef.current = [];
-      cropDragRef.current = {
-        handle: null,
-        startPoint: { x: 0, y: 0 },
-        startCrop: null
-      };
+      cropDragRef.current = { handle: null, startPoint: { x: 0, y: 0 }, startCrop: null };
       renderOverlay();
     };
 
     runtime.on("selection:created", syncSelection);
     runtime.on("selection:updated", syncSelection);
     runtime.on("selection:cleared", syncSelection);
-    runtime.on("object:modified", handleObjectModified);
-    runtime.on("text:editing:exited", handleTextEditingExited);
+    runtime.on("object:modified", (event: { target?: unknown }) => syncTransform(event.target));
+    runtime.on("text:editing:exited", (event: { target?: unknown }) => commitTextChange(event.target));
     runtime.on("mouse:down", handleMouseDown);
     runtime.on("mouse:move", handleMouseMove);
     runtime.on("mouse:up", stopInteraction);
     runtime.on("mouse:wheel", handleMouseWheel);
 
     return () => {
-      runtime.off("selection:created", syncSelection);
-      runtime.off("selection:updated", syncSelection);
-      runtime.off("selection:cleared", syncSelection);
-      runtime.off("object:modified", handleObjectModified);
-      runtime.off("text:editing:exited", handleTextEditingExited);
-      runtime.off("mouse:down", handleMouseDown);
-      runtime.off("mouse:move", handleMouseMove);
-      runtime.off("mouse:up", stopInteraction);
-      runtime.off("mouse:wheel", handleMouseWheel);
       runtime.dispose();
       runtimeRef.current = null;
     };
@@ -961,7 +812,6 @@ export function CanvasViewport({
     }
 
     const directManipulation = isDirectManipulationTool(activeTool);
-
     syncCanvasInteractionMode(runtime, activeTool);
 
     if (directManipulation) {
@@ -977,12 +827,7 @@ export function CanvasViewport({
       return;
     }
 
-    applyViewport(
-      runtime,
-      document.canvas.viewport.zoom,
-      document.canvas.viewport.panX,
-      document.canvas.viewport.panY
-    );
+    applyViewport(runtime, document.canvas.viewport.zoom, document.canvas.viewport.panX, document.canvas.viewport.panY);
     renderOverlay();
   }, [document.canvas.viewport.panX, document.canvas.viewport.panY, document.canvas.viewport.zoom]);
 
@@ -1006,12 +851,7 @@ export function CanvasViewport({
         return;
       }
 
-      applyViewport(
-        runtime,
-        document.canvas.viewport.zoom,
-        document.canvas.viewport.panX,
-        document.canvas.viewport.panY
-      );
+      applyViewport(runtime, document.canvas.viewport.zoom, document.canvas.viewport.panX, document.canvas.viewport.panY);
       suppressSyncRef.current = false;
       renderOverlay();
     };
@@ -1026,20 +866,32 @@ export function CanvasViewport({
 
   return (
     <div className="workspace__viewport-shell">
+      {activeTool === "brush" && selectedImageLayer ? (
+        <div className="workspace__mask-mode-panel">
+          <span>圈选方式</span>
+          <button
+            className={localMaskSelectionMode === "rectangle" ? "is-active" : ""}
+            onClick={() => setLocalMaskSelectionMode("rectangle")}
+            type="button"
+          >
+            规则框选
+          </button>
+          <button
+            className={localMaskSelectionMode === "freeform" ? "is-active" : ""}
+            onClick={() => setLocalMaskSelectionMode("freeform")}
+            type="button"
+          >
+            不规则框选
+          </button>
+        </div>
+      ) : null}
       <div className="workspace__viewport-inner">
         <div className="workspace__viewport-board">
-          <div
-            className="workspace__canvas-stack workspace__canvas-surface"
-            style={canvasSurfaceStyle}
-          >
+          <div className="workspace__canvas-stack workspace__canvas-surface" style={canvasSurfaceStyle}>
             <canvas ref={canvasRef} className="workspace__canvas" height={document.canvas.height} width={document.canvas.width} />
             <canvas
               ref={overlayRef}
-              className={`workspace__mask-overlay ${
-                ["brush", "doodle", "crop"].includes(activeTool)
-                  ? "workspace__mask-overlay--interactive"
-                  : ""
-              }`}
+              className={`workspace__mask-overlay ${["brush", "doodle", "crop"].includes(activeTool) ? "workspace__mask-overlay--interactive" : ""}`}
               height={document.canvas.height}
               width={document.canvas.width}
             />
