@@ -2,3 +2,39 @@
 .workspace__tool-button--compact[aria-label="执行修复"] {
   display: none;
 }
+
+.workspace__mask-mode-panel {
+  position: sticky;
+  top: 0;
+  z-index: 18;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: rgba(255, 250, 244, 0.94);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(8px);
+}
+
+.workspace__mask-mode-panel span {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.workspace__mask-mode-panel button {
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--text-primary);
+  padding: 6px 10px;
+}
+
+.workspace__mask-mode-panel button.is-active {
+  background: var(--accent-soft);
+  border-color: rgba(205, 92, 45, 0.4);
+  color: var(--accent);
+}
