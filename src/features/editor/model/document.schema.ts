@@ -76,9 +76,11 @@ const imageLayerSchema = layerBaseSchema.extend({
     brightness: z.number(),
     contrast: z.number(),
     saturation: z.number(),
+    vibrance: z.number().default(0),
     blur: z.number(),
     sharpen: z.number(),
-    temperature: z.number()
+    temperature: z.number(),
+    hue: z.number().default(0)
   }),
   mask: z.object({
     showPreview: z.boolean(),

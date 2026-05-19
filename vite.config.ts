@@ -5,6 +5,13 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: "0.0.0.0",
-    port: 5173
+    port: 5173,
+    proxy: {
+      "/api/ai": {
+        target: "https://dashscope.aliyuncs.com",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/ai/, "/api/v1")
+      }
+    }
   }
 });

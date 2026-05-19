@@ -1,0 +1,36 @@
+<svg width="640" height="460" viewBox="0 0 640 460" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="88" y1="56" x2="544" y2="404" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF4D8"/>
+      <stop offset="0.52" stop-color="#FFE3C4"/>
+      <stop offset="1" stop-color="#FFD3DA"/>
+    </linearGradient>
+    <linearGradient id="card" x1="164" y1="118" x2="486" y2="350" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFDF8"/>
+      <stop offset="1" stop-color="#FBE9DF"/>
+    </linearGradient>
+    <linearGradient id="bottle" x1="294" y1="138" x2="356" y2="332" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFC1CC"/>
+      <stop offset="1" stop-color="#FF8AA1"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="460" rx="32" fill="url(#bg)"/>
+  <circle cx="128" cy="102" r="54" fill="#FFF8E6"/>
+  <circle cx="536" cy="88" r="38" fill="#FFE7D7"/>
+  <circle cx="566" cy="338" r="52" fill="#FAD6DE"/>
+  <rect x="92" y="96" width="456" height="272" rx="28" fill="url(#card)"/>
+  <rect x="92" y="96" width="456" height="272" rx="28" stroke="#EBC8B8" stroke-width="4"/>
+  <ellipse cx="320" cy="356" rx="108" ry="22" fill="#E3B9AE" fill-opacity="0.35"/>
+  <rect x="276" y="146" width="88" height="182" rx="28" fill="url(#bottle)"/>
+  <rect x="292" y="120" width="56" height="40" rx="14" fill="#20242B"/>
+  <rect x="287" y="196" width="66" height="72" rx="16" fill="#FFF7F3"/>
+  <rect x="287" y="196" width="66" height="72" rx="16" stroke="#F1C9BD" stroke-width="3"/>
+  <path d="M320 214C333.255 214 344 224.745 344 238C344 251.255 333.255 262 320 262C306.745 262 296 251.255 296 238C296 224.745 306.745 214 320 214Z" fill="#FFB4C3"/>
+  <path d="M320 222C328.837 222 336 229.163 336 238C336 246.837 328.837 254 320 254C311.163 254 304 246.837 304 238C304 229.163 311.163 222 320 222Z" fill="#FFF0F4"/>
+  <path d="M170 300C212 272 246 252 286 238" stroke="#FFC36F" stroke-width="10" stroke-linecap="round"/>
+  <path d="M372 240C412 252 448 270 490 300" stroke="#8FC7A4" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="196" cy="258" r="18" fill="#FFD36D"/>
+  <circle cx="458" cy="250" r="16" fill="#9DD3B0"/>
+  <circle cx="208" cy="212" r="12" fill="#FFC9B8"/>
+  <circle cx="432" cy="202" r="10" fill="#F9BFD0"/>
+</svg>

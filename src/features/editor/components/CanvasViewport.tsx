@@ -3,12 +3,14 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type {
   CanvasBackgroundMode,
   DoodlePoint,
+  DoodleLayer,
   EditorDocument,
   EditorTool,
   ImageCrop,
   ImageLayer,
   MaskPoint
 } from "../model/document";
+import { getDefaultSafeAreaInset } from "../model/document";
 import { seedCanvas } from "../runtime/seedCanvas";
 
 type CropSession = {
@@ -16,7 +18,7 @@ type CropSession = {
   draft: ImageCrop;
 } | null;
 
-type MaskSelectionMode = "rectangle" | "freeform";
+export type MaskSelectionMode = "rectangle" | "freeform";
 
 type CanvasViewportProps = {
   activeTool: EditorTool;
@@ -43,6 +45,7 @@ type CanvasViewportProps = {
   onMaskStart: (layerId: string, mode: "paint" | "erase", point: MaskPoint) => void;
   onMaskAppend: (layerId: string, point: MaskPoint) => void;
   onMaskFinish: (layerId: string) => void;
+  doodleStyle: Pick<DoodleLayer, "stroke" | "strokeWidth">;
   onDoodleCommit: (points: DoodlePoint[]) => void;
   onCropSessionChange: (crop: Partial<ImageCrop>) => void;
 };
@@ -87,10 +90,42 @@ function isDirectManipulationTool(activeTool: EditorTool) {
   return ["brush", "crop", "doodle"].includes(activeTool);
 }
 
-function syncCanvasInteractionMode(runtime: Canvas, activeTool: EditorTool, isPanning = false) {
+function syncCanvasObjectInteractivity(
+  runtime: Canvas,
+  document: EditorDocument,
+  activeTool: EditorTool,
+  isPanning = false
+) {
+  const directManipulation = isDirectManipulationTool(activeTool);
+  const disableObjectInteraction = directManipulation || isPanning;
+
+  runtime.skipTargetFind = disableObjectInteraction;
+
+  runtime.getObjects().forEach((object) => {
+    const layerId = getLayerId(object);
+    const layer = layerId ? document.layers.find((item) => item.id === layerId) : null;
+    const isLocked = layer?.locked ?? true;
+    const canInteract = !disableObjectInteraction && !isLocked;
+
+    object.set({
+      selectable: canInteract,
+      evented: canInteract,
+      hasControls: canInteract,
+      hasBorders: canInteract
+    });
+  });
+}
+
+function syncCanvasInteractionMode(
+  runtime: Canvas,
+  document: EditorDocument,
+  activeTool: EditorTool,
+  isPanning = false
+) {
   const directManipulation = isDirectManipulationTool(activeTool);
 
   runtime.selection = !directManipulation && !isPanning;
+  syncCanvasObjectInteractivity(runtime, document, activeTool, isPanning);
   runtime.defaultCursor = directManipulation ? "crosshair" : isPanning ? "grabbing" : "default";
   runtime.hoverCursor = runtime.defaultCursor;
 }
@@ -359,7 +394,8 @@ function drawMaskOverlay(
 function drawDoodlePreview(
   context: CanvasRenderingContext2D,
   points: DoodlePoint[],
-  viewport: EditorDocument["canvas"]["viewport"]
+  viewport: EditorDocument["canvas"]["viewport"],
+  doodleStyle: Pick<DoodleLayer, "stroke" | "strokeWidth">
 ) {
   if (points.length < 2) {
     return;
@@ -370,8 +406,8 @@ function drawDoodlePreview(
   context.beginPath();
   context.lineCap = "round";
   context.lineJoin = "round";
-  context.strokeStyle = "#cd5c2d";
-  context.lineWidth = 14;
+  context.strokeStyle = doodleStyle.stroke;
+  context.lineWidth = doodleStyle.strokeWidth;
   points.forEach((point, index) => {
     if (index === 0) {
       context.moveTo(point.x, point.y);
@@ -402,9 +438,53 @@ function drawCropOverlay(
   context.restore();
 }
 
+function drawSafeAreaOverlay(
+  context: CanvasRenderingContext2D,
+  document: EditorDocument,
+  viewport: EditorDocument["canvas"]["viewport"]
+) {
+  const inset =
+    document.canvas.safeAreaInset > 0
+      ? document.canvas.safeAreaInset
+      : getDefaultSafeAreaInset(document.canvas.width, document.canvas.height);
+  const safeX = inset;
+  const safeY = inset;
+  const safeWidth = Math.max(0, document.canvas.width - inset * 2);
+  const safeHeight = Math.max(0, document.canvas.height - inset * 2);
+
+  if (safeWidth <= 0 || safeHeight <= 0) {
+    return;
+  }
+
+  context.save();
+  context.setTransform(viewport.zoom, 0, 0, viewport.zoom, viewport.panX, viewport.panY);
+
+  context.fillStyle = "rgba(34, 24, 18, 0.14)";
+  context.beginPath();
+  context.rect(0, 0, document.canvas.width, document.canvas.height);
+  context.rect(safeX, safeY, safeWidth, safeHeight);
+  context.fill("evenodd");
+
+  context.strokeStyle = "rgba(255, 248, 238, 0.96)";
+  context.lineWidth = 6;
+  context.strokeRect(safeX, safeY, safeWidth, safeHeight);
+
+  context.strokeStyle = "rgba(195, 111, 73, 0.98)";
+  context.lineWidth = 2;
+  context.setLineDash([18, 10]);
+  context.strokeRect(safeX, safeY, safeWidth, safeHeight);
+
+  context.fillStyle = "rgba(195, 111, 73, 0.94)";
+  context.font = '600 18px "Segoe UI"';
+  context.textBaseline = "bottom";
+  context.fillText("Safe area", safeX + 12, Math.max(24, safeY - 10));
+  context.restore();
+}
+
 export function CanvasViewport({
   activeTool,
   cropSession,
+  doodleStyle,
   document,
   maskSelectionMode = "rectangle",
   selectedImageLayer,
@@ -488,13 +568,14 @@ export function CanvasViewport({
     }
 
     context.clearRect(0, 0, overlay.width, overlay.height);
+    drawSafeAreaOverlay(context, documentRef.current, documentRef.current.canvas.viewport);
 
     if (activeToolRef.current === "brush" && selectedImageLayerRef.current) {
       drawMaskOverlay(context, selectedImageLayerRef.current, documentRef.current.canvas.viewport, maskDraftRef.current);
     }
 
     if (activeToolRef.current === "doodle") {
-      drawDoodlePreview(context, doodlePointsRef.current, documentRef.current.canvas.viewport);
+      drawDoodlePreview(context, doodlePointsRef.current, documentRef.current.canvas.viewport, doodleStyle);
     }
 
     if (
@@ -506,6 +587,10 @@ export function CanvasViewport({
       drawCropOverlay(context, selectedImageLayerRef.current, cropSessionRef.current.draft, documentRef.current.canvas.viewport);
     }
   };
+
+  useEffect(() => {
+    setLocalMaskSelectionMode(maskSelectionMode);
+  }, [maskSelectionMode]);
 
   useEffect(() => {
     activeToolRef.current = activeTool;
@@ -612,7 +697,7 @@ export function CanvasViewport({
 
       if (currentTool === "select" && !targetLayerId) {
         panSessionRef.current = { isPanning: true, lastX: pointer.x, lastY: pointer.y };
-        syncCanvasInteractionMode(runtime, currentTool, true);
+        syncCanvasInteractionMode(runtime, currentDocument, currentTool, true);
         runtime.discardActiveObject();
         runtime.requestRenderAll();
         return;
@@ -769,7 +854,7 @@ export function CanvasViewport({
         panSessionRef.current.isPanning = false;
         const viewportTransform = runtime.viewportTransform ?? [1, 0, 0, 1, 0, 0];
         onViewportChangeRef.current({ zoom: viewportTransform[0] ?? 1, panX: viewportTransform[4] ?? 0, panY: viewportTransform[5] ?? 0 });
-        syncCanvasInteractionMode(runtime, activeToolRef.current);
+        syncCanvasInteractionMode(runtime, documentRef.current, activeToolRef.current);
       }
 
       if (drawSessionRef.current.mode === "mask") {
@@ -812,7 +897,7 @@ export function CanvasViewport({
     }
 
     const directManipulation = isDirectManipulationTool(activeTool);
-    syncCanvasInteractionMode(runtime, activeTool);
+    syncCanvasInteractionMode(runtime, documentRef.current, activeTool);
 
     if (directManipulation) {
       runtime.discardActiveObject();
@@ -844,6 +929,7 @@ export function CanvasViewport({
       suppressSyncRef.current = true;
       await seedCanvas(runtime, document, selectedLayerIds, {
         cropPreview: cropSession,
+        showSafeArea: false,
         renderCanvasBackground: false
       });
 
@@ -852,6 +938,7 @@ export function CanvasViewport({
       }
 
       applyViewport(runtime, document.canvas.viewport.zoom, document.canvas.viewport.panX, document.canvas.viewport.panY);
+      syncCanvasInteractionMode(runtime, document, activeToolRef.current);
       suppressSyncRef.current = false;
       renderOverlay();
     };
@@ -862,11 +949,11 @@ export function CanvasViewport({
       cancelled = true;
       suppressSyncRef.current = false;
     };
-  }, [cropSession, document, selectedLayerIds]);
+  }, [cropSession, document, doodleStyle, selectedLayerIds]);
 
   return (
     <div className="workspace__viewport-shell">
-      {activeTool === "brush" && selectedImageLayer ? (
+      {false && activeTool === "brush" && selectedImageLayer ? (
         <div className="workspace__mask-mode-panel">
           <span>圈选方式</span>
           <button

@@ -38,3 +38,9 @@
   border-color: rgba(205, 92, 45, 0.4);
   color: var(--accent);
 }
+
+.workspace__inline-actions--segmented .workspace__action-button.is-active {
+  background: var(--accent-soft);
+  border-color: rgba(205, 92, 45, 0.4);
+  color: var(--accent);
+}

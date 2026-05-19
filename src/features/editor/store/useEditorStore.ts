@@ -12,6 +12,7 @@ import {
   createLayerId,
   createStrokeId,
   getCanvasPreset,
+  getDefaultSafeAreaInset,
   getEnhanceProfile,
   getImageFilterPreset,
   getTextTemplatePreset,
@@ -71,7 +72,10 @@ type EditorStore = {
   importImage: (file: File) => Promise<void>;
   addTextLayer: () => void;
   addDecorationLayer: () => void;
-  addDoodleLayer: (points: DoodlePoint[]) => void;
+  addDoodleLayer: (
+    points: DoodlePoint[],
+    style?: Partial<Pick<DoodleLayer, "stroke" | "strokeWidth">>
+  ) => void;
   applyTextTemplate: (layerId: string, templateId: TextTemplateId) => void;
   updateLayerName: (layerId: string, name: string) => void;
   toggleLayerVisibility: (layerId: string) => void;
@@ -423,7 +427,8 @@ function sanitizeImageCrop(layer: ImageLayer, crop: Partial<ImageCrop>) {
 
 function createDoodleLayer(
   points: DoodlePoint[],
-  zIndex: number
+  zIndex: number,
+  styleOverride?: Partial<Pick<DoodleLayer, "stroke" | "strokeWidth">>
 ): DoodleLayer | null {
   if (points.length < 2) {
     return null;
@@ -437,7 +442,10 @@ function createDoodleLayer(
   const maxY = Math.max(...ys);
   const width = Math.max(maxX - minX, 1);
   const height = Math.max(maxY - minY, 1);
-  const style = createDefaultDoodleStyle();
+  const style = {
+    ...createDefaultDoodleStyle(),
+    ...styleOverride
+  };
 
   return {
     id: createLayerId("doodle"),
@@ -669,7 +677,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
             presetId: preset.id,
             width: preset.width,
             height: preset.height,
-            safeAreaInset: Math.round(state.document.canvas.safeAreaInset * scaleFit)
+            safeAreaInset: getDefaultSafeAreaInset(preset.width, preset.height)
           },
           workflowMeta: {
             ...state.document.workflowMeta,
@@ -810,9 +818,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         { activeTool: "shape" }
       );
     }),
-  addDoodleLayer: (points) =>
+  addDoodleLayer: (points, style) =>
     set((state) => {
-      const nextLayer = createDoodleLayer(points, state.document.layers.length);
+      const nextLayer = createDoodleLayer(points, state.document.layers.length, style);
 
       if (!nextLayer) {
         return state;

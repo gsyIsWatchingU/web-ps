@@ -99,9 +99,11 @@ function buildSharpenMatrix(intensity: number) {
 }
 
 function buildTemperatureMatrix(temperature: number) {
-  const shift = Math.round(temperature * 40);
+  const redShift = Math.round(temperature * 24);
+  const greenShift = Math.round(temperature * 6);
+  const blueShift = Math.round(temperature * -18);
 
-  return [1, 0, 0, 0, shift, 0, 1, 0, 0, 0, 0, 0, 1, 0, -shift, 0, 0, 0, 1, 0];
+  return [1, 0, 0, 0, redShift, 0, 1, 0, 0, greenShift, 0, 0, 1, 0, blueShift, 0, 0, 0, 1, 0];
 }
 
 function applyImageFilters(image: FabricImage, layer: ImageLayer) {
@@ -119,6 +121,10 @@ function applyImageFilters(image: FabricImage, layer: ImageLayer) {
     nextFilters.push(new filters.Saturation({ saturation: layer.filters.saturation }));
   }
 
+  if (layer.filters.vibrance !== 0) {
+    nextFilters.push(new filters.Vibrance({ vibrance: layer.filters.vibrance }));
+  }
+
   if (layer.filters.blur !== 0) {
     nextFilters.push(new filters.Blur({ blur: layer.filters.blur }));
   }
@@ -129,6 +135,10 @@ function applyImageFilters(image: FabricImage, layer: ImageLayer) {
 
   if (layer.filters.temperature !== 0) {
     nextFilters.push(new filters.ColorMatrix({ matrix: buildTemperatureMatrix(layer.filters.temperature) }));
+  }
+
+  if (layer.filters.hue !== 0) {
+    nextFilters.push(new filters.HueRotation({ rotation: layer.filters.hue }));
   }
 
   image.filters = nextFilters;

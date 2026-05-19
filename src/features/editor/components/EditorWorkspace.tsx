@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type ReactNode } from "react";
 import {
   canvasBackgroundModes,
   canvasPresets,
+  createDefaultDoodleStyle,
   enhanceProfiles,
   imageFilterPresets,
   layerTypeLabels,
@@ -12,13 +13,14 @@ import {
   type EditorDocument,
   type EditorLayer,
   type ExportSizePreset,
+  type ImageFilters,
   type ImageCrop,
   type TextLayer
 } from "../model/document";
 import { hasAiConfig } from "../runtime/aiConfig";
 import { exportDocument } from "../runtime/exportDocument";
 import { useEditorStore } from "../store/useEditorStore";
-import { CanvasViewport } from "./CanvasViewport";
+import { CanvasViewport, type MaskSelectionMode } from "./CanvasViewport";
 import { useMessage } from "../../../shared/message";
 
 const EXPORT_STATE_EVENT = "editor:export-state";
@@ -53,10 +55,11 @@ const toolItemsV2 = [
 ] as const;
 
 const cropAspectOptions: Array<{ label: string; value: number | null }> = [
-  { label: "原始比例", value: null },
   { label: "1:1", value: 1 },
   { label: "4:5", value: 4 / 5 },
-  { label: "9:16", value: 9 / 16 }
+  { label: "9:16", value: 9 / 16 },
+  { label: "原始", value: null },
+
 ];
 
 const decorationShapeOptions: Array<{
@@ -118,7 +121,7 @@ function renderLayerStatusChips(layer: EditorLayer, isSelected = false) {
       {/* {isSelected ? <span className="workspace__chip workspace__chip--accent">当前图层</span> : null} */}
       <span className="workspace__chip">{layerTypeLabels[layer.type]}</span>
       <span className={`workspace__chip ${layer.visible ? "workspace__chip--success" : "workspace__chip--muted"}`}>
-        {layer.visible ? "显示中" : "已隐藏"}
+        {layer.visible ? "显示" : "隐藏"}
       </span>
       <span className={`workspace__chip ${layer.locked ? "workspace__chip--warning" : "workspace__chip--success"}`}>
         {layer.locked ? "已锁定" : "可编辑"}
@@ -146,6 +149,35 @@ function getScaledDimensions(canvasWidth: number, canvasHeight: number, scalePer
 }
 
 const IMAGE_REQUIRED_TOOLS: ToolId[] = ["crop", "brush", "eraser", "repair", "filter"];
+const FILTER_PREVIEW_SOURCE = "/help/filter-preview-sample.svg";
+
+function clampPreviewValue(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function buildFilterPreviewStyle(filters: ImageFilters): CSSProperties {
+  const brightness = clampPreviewValue(1 + filters.brightness * 2.2, 0.72, 1.45);
+  const contrast = clampPreviewValue(1 + filters.contrast * 3.2, 0.7, 1.9);
+  const saturation = clampPreviewValue(1 + filters.saturation * 3.2, 0, 2.2);
+  const vibrance = clampPreviewValue(1 + filters.vibrance * 2.4, 0.45, 1.95);
+  const grayscale = clampPreviewValue(Math.max(-(filters.saturation + filters.vibrance * 0.35), 0) * 1.1, 0, 1);
+  const blur = clampPreviewValue(filters.blur * 10, 0, 4);
+  const sepia = clampPreviewValue(Math.max(filters.temperature, 0) * 0.18, 0, 0.16);
+  const hueRotate = `${Math.round((filters.hue + filters.temperature * -0.18) * 120)}deg`;
+
+  return {
+    filter: [
+      `brightness(${brightness})`,
+      `contrast(${contrast})`,
+      `saturate(${saturation})`,
+      `saturate(${vibrance})`,
+      `grayscale(${grayscale})`,
+      `blur(${blur}px)`,
+      `sepia(${sepia})`,
+      `hue-rotate(${hueRotate})`
+    ].join(" ")
+  };
+}
 
 function buildPersistedDraft(document: EditorDocument, savedAt: string): EditorDocument {
   return {
@@ -334,6 +366,8 @@ export function EditorWorkspace() {
   const [lastExportedFilename, setLastExportedFilename] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
+  const [doodleStyle, setDoodleStyle] = useState(createDefaultDoodleStyle);
+  const [maskSelectionMode, setMaskSelectionMode] = useState<MaskSelectionMode>("rectangle");
   const {
     activeTool,
     cropSession,
@@ -352,6 +386,7 @@ export function EditorWorkspace() {
     document,
     duplicateLayer,
     historyPast,
+    historyFuture,
     importImage,
     recordWorkflowExport,
     moveLayer,
@@ -402,9 +437,25 @@ export function EditorWorkspace() {
   const selectedDoodleLayer = getSelectedDoodleLayer(selectedLayer);
   const activeToolItem = toolItemsAntd.find((tool) => tool.id === activeTool);
   const canUndo = historyPast.length > 0;
+  const canRedo = historyFuture.length > 0;
   const viewport = document.canvas.viewport;
   const canvasDisplayBackground = document.canvas.displayBackground;
   const aiConfigured = hasAiConfig();
+  const filterPreviewMap = useMemo(
+    () =>
+      Object.fromEntries(imageFilterPresets.map((preset) => [preset.id, FILTER_PREVIEW_SOURCE])) as Record<
+        (typeof imageFilterPresets)[number]["id"],
+        string
+      >,
+    []
+  );
+  const filterPreviewStyleMap = useMemo(
+    () =>
+      Object.fromEntries(
+        imageFilterPresets.map((preset) => [preset.id, buildFilterPreviewStyle(preset.filters)])
+      ) as Record<(typeof imageFilterPresets)[number]["id"], CSSProperties>,
+    []
+  );
   const activeCropDraft =
     cropSession && selectedImageLayer && cropSession.layerId === selectedImageLayer.id
       ? cropSession.draft
@@ -657,13 +708,12 @@ export function EditorWorkspace() {
       return;
     }
 
-    if (toolId === "repair") {
-      void handleAiRepair();
-      return;
-    }
-
     setFeedbackMessage(null);
     setActiveTool(toolId);
+  };
+
+  const handleDoodleCommit = (points: Parameters<typeof addDoodleLayer>[0]) => {
+    addDoodleLayer(points, doodleStyle);
   };
 
   const handleExportSizePresetChange = (preset: ExportSizePreset) => {
@@ -781,6 +831,336 @@ export function EditorWorkspace() {
     }
 
     if (selectedImageLayer) {
+      const filterAdjustmentControls = (
+        [
+          ["brightness", "亮度", -1, 1, 0.01],
+          ["contrast", "对比度", -1, 1, 0.01],
+          ["saturation", "饱和度", -1, 1, 0.01],
+          ["blur", "模糊", 0, 1, 0.01],
+          ["sharpen", "锐化", 0, 1, 0.01],
+          ["temperature", "色温", -1, 1, 0.01]
+        ] as const
+      ).map(([key, label, min, max, step]) => (
+        <label className="workspace__property" key={key}>
+          <span className="workspace__property-label">{label}</span>
+          <input
+            className="workspace__range"
+            max={max}
+            min={min}
+            onChange={(event) =>
+              updateImageFilters(selectedImageLayer.id, {
+                [key]: Number(event.target.value)
+              })
+            }
+            step={step}
+            type="range"
+            value={selectedImageLayer.filters[key]}
+          />
+          <div className="workspace__property-value">{selectedImageLayer.filters[key].toFixed(2)}</div>
+        </label>
+      ));
+
+      const maskControlsBase = (
+        <>
+          <label className="workspace__property workspace__property--inner">
+            <span className="workspace__property-label">笔刷大小</span>
+            <input
+              className="workspace__range"
+              max={160}
+              min={8}
+              onChange={(event) => updateMaskBrushSize(selectedImageLayer.id, Number(event.target.value))}
+              step={1}
+              type="range"
+              value={selectedImageLayer.mask.brushSize}
+            />
+            <div className="workspace__property-value">{selectedImageLayer.mask.brushSize}px</div>
+          </label>
+          <div className="workspace__inline-actions">
+            <button
+              className="workspace__action-button"
+              onClick={() => toggleMaskPreview(selectedImageLayer.id)}
+              type="button"
+            >
+              {selectedImageLayer.mask.showPreview ? "隐藏蒙版预览" : "显示蒙版预览"}
+            </button>
+            <button className="workspace__action-button" onClick={() => clearMask(selectedImageLayer.id)} type="button">
+              清空蒙版
+            </button>
+          </div>
+        </>
+      );
+
+      const showMaskModeControls = activeTool === "brush" || activeTool === "eraser" || activeTool === "repair";
+      const showApplyAiRepairAction = activeTool === "brush" || activeTool === "eraser";
+
+      const maskControls = (
+        <>
+          {showMaskModeControls ? (
+            <div className="workspace__property workspace__property--inner">
+              <span className="workspace__property-label">圈选方式</span>
+              <div className="workspace__inline-actions workspace__inline-actions--segmented">
+                <button
+                  className={`workspace__action-button ${maskSelectionMode === "rectangle" ? "is-active" : ""}`}
+                  onClick={() => setMaskSelectionMode("rectangle")}
+                  type="button"
+                >
+                  矩形圈选
+                </button>
+                <button
+                  className={`workspace__action-button ${maskSelectionMode === "freeform" ? "is-active" : ""}`}
+                  onClick={() => setMaskSelectionMode("freeform")}
+                  type="button"
+                >
+                  自由圈选
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {maskControlsBase}
+          {showApplyAiRepairAction ? (
+            <div className="workspace__inline-actions">
+              <button
+                className="workspace__action-button"
+                disabled={aiBusy !== null || !aiConfigured}
+                onClick={() => void handleAiRepair()}
+                type="button"
+              >
+                {aiBusy === "repair" ? "处理中..." : "应用AI修复"}
+              </button>
+            </div>
+          ) : null}
+        </>
+      );
+
+      if (activeTool === "crop") {
+        return (
+          <div className="workspace__property-list">
+            <div className="workspace__property">
+              <div className="workspace__property-label">应用裁剪</div>
+              <div className="workspace__inline-actions">
+                {cropAspectOptions.map((option) => (
+                  <button
+                    key={option.label}
+                    className="workspace__action-button"
+                    onClick={() => handleCropAspect(option.value)}
+                    type="button"
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              {activeCropDraft ? (
+                <p className="workspace__footer-note">
+                  当前裁剪：{activeCropDraft.width} × {activeCropDraft.height}
+                </p>
+              ) : null}
+              <div className="workspace__inline-actions">
+                <button className="workspace__action-button" onClick={commitCropSession} type="button">
+                  应用裁剪
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (activeTool === "filter") {
+        return (
+          <div className="workspace__property-list">
+            <div className="workspace__property">
+              <div className="workspace__property-label">滤镜预设</div>
+              <div className="workspace__filter-preview-grid">
+                {imageFilterPresets.map((preset) => (
+                  <button
+                    key={preset.id}
+                    aria-pressed={selectedImageLayer.presetFilterId === preset.id}
+                    className={`workspace__filter-preview-card ${selectedImageLayer.presetFilterId === preset.id ? "is-active" : ""
+                      }`}
+                    onClick={() => applyImagePreset(selectedImageLayer.id, preset.id)}
+                    type="button"
+                  >
+                    <div className="workspace__filter-preview-image-shell">
+                      {filterPreviewMap[preset.id] ? (
+                        <img
+                          alt={preset.label}
+                          className="workspace__filter-preview-image"
+                          src={filterPreviewMap[preset.id]}
+                          style={filterPreviewStyleMap[preset.id]}
+                        />
+                      ) : (
+                        <div className="workspace__filter-preview-placeholder">预览生成中</div>
+                      )}
+                    </div>
+                    <strong className="workspace__filter-preview-title">{preset.label}</strong>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="workspace__property">
+              <div className="workspace__property-label">快速增强</div>
+              <div className="workspace__inline-actions">
+                {enhanceProfiles.map((profile) => (
+                  <button
+                    key={profile.id}
+                    className="workspace__action-button"
+                    onClick={() => applyEnhanceProfile(selectedImageLayer.id, profile.id)}
+                    type="button"
+                  >
+                    {profile.label}
+                  </button>
+                ))}
+                <button
+                  className="workspace__action-button"
+                  onClick={() => resetImageAdjustments(selectedImageLayer.id)}
+                  type="button"
+                >
+                  重置调整
+                </button>
+              </div>
+            </div>
+
+            {filterAdjustmentControls}
+          </div>
+        );
+      }
+
+      if (activeTool === "brush" || activeTool === "eraser") {
+        return (
+          <div className="workspace__property-list">
+            <div className="workspace__property">
+              <div className="workspace__property-label">
+                {activeTool === "brush" ? "圈选修复" : "擦除圈选"}
+              </div>
+              {maskControls}
+            </div>
+          </div>
+        );
+      }
+
+      if (activeTool === "repair") {
+        return (
+          <div className="workspace__property-list">
+            <div className="workspace__property">
+              <div className="workspace__property-label">AI 局部修复</div>
+              <p className="workspace__footer-note">
+                先用圈选工具标记需要修复的区域，再填写提示词并执行局部修复。
+              </p>
+              {!aiConfigured ? (
+                <p className="workspace__warning">
+                  请先在 `src/features/editor/runtime/aiConfig.ts` 中配置 API Key 和 Base URL。
+                </p>
+              ) : null}
+              <label className="workspace__property workspace__property--inner">
+                <span className="workspace__property-label">修复提示词</span>
+                <textarea
+                  className="workspace__text-area"
+                  onChange={(event) => updateAiPrompt(selectedImageLayer.id, event.target.value)}
+                  rows={3}
+                  value={selectedImageLayer.aiMeta.prompt}
+                />
+              </label>
+              {maskControls}
+              <div className="workspace__inline-actions">
+                <button
+                  className="workspace__action-button"
+                  disabled={aiBusy !== null || !aiConfigured}
+                  onClick={() => void handleAiRepair()}
+                  type="button"
+                >
+                  {aiBusy === "repair" ? "修复处理中..." : "执行局部修复"}
+                </button>
+              </div>
+              <p className="workspace__footer-note">
+                最近一次 AI 修复：{selectedImageLayer.aiMeta.lastAiAction ?? "暂无"} ·{" "}
+                {formatTime(selectedImageLayer.aiMeta.lastAiSucceededAt)}
+              </p>
+              {selectedImageLayer.aiMeta.lastAiError ? (
+                <p className="workspace__warning">{selectedImageLayer.aiMeta.lastAiError}</p>
+              ) : null}
+            </div>
+
+            <div className="workspace__property">
+              <div className="workspace__property-label">AI 扩图</div>
+              <label className="workspace__property workspace__property--inner">
+                <span className="workspace__property-label">扩图提示词</span>
+                <textarea
+                  className="workspace__text-area"
+                  onChange={(event) => updateAiExpandPrompt(selectedImageLayer.id, event.target.value)}
+                  rows={3}
+                  value={selectedImageLayer.aiMeta.expandPrompt}
+                />
+              </label>
+              <div className="workspace__inline-actions">
+                {(["1:1", "4:5", "9:16"] as CanvasPresetId[]).map((presetId) => (
+                  <button
+                    key={presetId}
+                    className="workspace__action-button"
+                    disabled={aiBusy !== null || !aiConfigured}
+                    onClick={() => void handleAiExtend(presetId)}
+                    type="button"
+                  >
+                    {aiBusy === "extend" ? "扩图处理中..." : `扩图到 ${presetId}`}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (activeTool === "select" || activeTool === "doodle" || activeTool === "text" || activeTool === "shape") {
+        if (activeTool === "doodle") {
+          return (
+            <div className="workspace__property-list">
+              <label className="workspace__property">
+                <span className="workspace__property-label">画笔颜色</span>
+                <input
+                  className="workspace__color-input workspace__color-input--wide"
+                  onChange={(event) =>
+                    setDoodleStyle((current) => ({
+                      ...current,
+                      stroke: event.target.value
+                    }))
+                  }
+                  type="color"
+                  value={doodleStyle.stroke}
+                />
+              </label>
+              <label className="workspace__property">
+                <span className="workspace__property-label">画笔粗细</span>
+                <input
+                  className="workspace__range"
+                  max={64}
+                  min={2}
+                  onChange={(event) =>
+                    setDoodleStyle((current) => ({
+                      ...current,
+                      strokeWidth: Number(event.target.value)
+                    }))
+                  }
+                  step={1}
+                  type="range"
+                  value={doodleStyle.strokeWidth}
+                />
+                <div className="workspace__property-value">{doodleStyle.strokeWidth}px</div>
+              </label>
+            </div>
+          );
+        }
+
+        return (
+          <div className="workspace__property-list">
+            <div className="workspace__property workspace__property--highlight">
+              <div className="workspace__property-label">当前工具暂无额外属性</div>
+              <p className="workspace__footer-note">
+                继续在画布上操作，或切换到右侧“图层属性”查看当前选中图层的详细设置。
+              </p>
+            </div>
+          </div>
+        );
+      }
+
       return (
         <div className="workspace__property-list">
           {showCropProperties ? (
@@ -819,17 +1199,28 @@ export function EditorWorkspace() {
 
           <div className="workspace__property">
             <div className="workspace__property-label">滤镜预设</div>
-            <div className="workspace__tool-stack">
+            <div className="workspace__filter-preview-grid">
               {imageFilterPresets.map((preset) => (
                 <button
                   key={preset.id}
-                  className={`workspace__tool-button workspace__tool-button--stack ${selectedImageLayer.presetFilterId === preset.id ? "is-active" : ""
+                  aria-pressed={selectedImageLayer.presetFilterId === preset.id}
+                  className={`workspace__filter-preview-card ${selectedImageLayer.presetFilterId === preset.id ? "is-active" : ""
                     }`}
                   onClick={() => applyImagePreset(selectedImageLayer.id, preset.id)}
                   type="button"
                 >
-                  <strong>{preset.label}</strong>
-                  <span>{preset.description}</span>
+                  <div className="workspace__filter-preview-image-shell">
+                    <img
+                      alt={preset.label}
+                      className="workspace__filter-preview-image"
+                      src={FILTER_PREVIEW_SOURCE}
+                      style={buildFilterPreviewStyle(preset.filters)}
+                    />
+                  </div>
+                  {selectedImageLayer.presetFilterId === preset.id ? (
+                    <span className="workspace__filter-preview-badge">已选</span>
+                  ) : null}
+                  <strong className="workspace__filter-preview-title">{preset.label}</strong>
                 </button>
               ))}
             </div>
@@ -1170,7 +1561,13 @@ export function EditorWorkspace() {
     return (
       <div className="workspace__property-list">
         <div className="workspace__property workspace__property--highlight">
-          <div className="workspace__property-label">当前图层状态</div>
+          <span className="workspace__property-label">图层名称</span>
+          <input
+            className="workspace__text-input"
+            onChange={(event) => updateLayerName(selectedLayer.id, event.target.value)}
+            type="text"
+            value={selectedLayer.name}
+          />
           {renderLayerStatusChips(selectedLayer, true)}
           <div className="workspace__inline-actions">
             <button
@@ -1187,6 +1584,24 @@ export function EditorWorkspace() {
             >
               {selectedLayer.locked ? "解锁图层" : "锁定图层"}
             </button>
+
+            <button className="workspace__action-button" onClick={() => duplicateLayer(selectedLayer.id)} type="button">
+              复制图层
+            </button>
+            <button
+              className="workspace__action-button workspace__action-button--danger"
+              onClick={() => removeLayer(selectedLayer.id)}
+              type="button"
+            >
+              删除图层
+            </button>
+
+            <button className="workspace__action-button" onClick={() => centerLayer(selectedLayer.id, "horizontal")} type="button">
+              水平居中
+            </button>
+            <button className="workspace__action-button" onClick={() => centerLayer(selectedLayer.id, "vertical")} type="button">
+              垂直居中
+            </button>
             <button className="workspace__action-button" onClick={() => moveLayer(selectedLayer.id, "up")} type="button">
               上移一层
             </button>
@@ -1195,15 +1610,7 @@ export function EditorWorkspace() {
             </button>
           </div>
         </div>
-        <label className="workspace__property">
-          <span className="workspace__property-label">图层名称</span>
-          <input
-            className="workspace__text-input"
-            onChange={(event) => updateLayerName(selectedLayer.id, event.target.value)}
-            type="text"
-            value={selectedLayer.name}
-          />
-        </label>
+
         <label className="workspace__property">
           <span className="workspace__property-label">不透明度</span>
           <input
@@ -1291,24 +1698,7 @@ export function EditorWorkspace() {
             <div className="workspace__property-value">{Math.round(selectedLayer.transform.rotation)}°</div>
           </label>
         </div>
-        <div className="workspace__inline-actions">
-          <button className="workspace__action-button" onClick={() => centerLayer(selectedLayer.id, "horizontal")} type="button">
-            水平居中
-          </button>
-          <button className="workspace__action-button" onClick={() => centerLayer(selectedLayer.id, "vertical")} type="button">
-            垂直居中
-          </button>
-          <button className="workspace__action-button" onClick={() => duplicateLayer(selectedLayer.id)} type="button">
-            复制图层
-          </button>
-          <button
-            className="workspace__action-button workspace__action-button--danger"
-            onClick={() => removeLayer(selectedLayer.id)}
-            type="button"
-          >
-            删除图层
-          </button>
-        </div>
+
       </div>
     );
   };
@@ -1348,177 +1738,164 @@ export function EditorWorkspace() {
           type="file"
         />
 
-        {leftSidebarTab === "canvas" ? (
-          <>
+        <div className="workspace__column-content">
+          {leftSidebarTab === "canvas" ? (
+            <>
 
 
+              <section className="workspace__section">
+                <h3>画布设置</h3>
+                <div className="workspace__preset-grid">
+                  {canvasPresets.map((preset) => (
+                    <button
+                      key={preset.id}
+                      className={`workspace__preset-button ${document.canvas.presetId === preset.id ? "is-active" : ""}`}
+                      onClick={() => setCanvasPreset(preset.id)}
+                      type="button"
+                    >
+                      <strong>{preset.label}</strong>
+                      {/* <div className="workspace__meta">{preset.width} × {preset.height}</div> */}
+                    </button>
+                  ))}
+                </div>
+                <div className="workspace__property-list workspace__property-list--tight">
+                  <label className="workspace__property">
+                    <span className="workspace__property-label">画布背景</span>
+                    <select
+                      className="workspace__select"
+                      onChange={(event) =>
+                        setCanvasDisplayBackground({
+                          mode: event.target.value as (typeof canvasBackgroundModes)[number]
+                        })
+                      }
+                      value={canvasDisplayBackground.mode}
+                    >
+                      <option value="grid">网格线</option>
+                      <option value="solid">纯色</option>
+                      <option value="dots">点阵</option>
+                    </select>
+                  </label>
+                  <label className="workspace__property">
+                    <span className="workspace__property-label">背景色</span>
+                    <input
+                      className="workspace__color-input workspace__color-input--wide"
+                      onChange={(event) =>
+                        setCanvasDisplayBackground({
+                          color: event.target.value
+                        })
+                      }
+                      type="color"
+                      value={canvasDisplayBackground.color}
+                    />
+                  </label>
+                  <label className="workspace__property">
+                    <span className="workspace__property-label">画布缩放</span>
+                    <input
+                      className="workspace__range"
+                      max={3}
+                      min={0.2}
+                      onChange={(event) => setCanvasViewport({ zoom: Number(event.target.value) })}
+                      step={0.01}
+                      type="range"
+                      value={viewport.zoom}
+                    />
+                    <div className="workspace__property-value">{Math.round(viewport.zoom * 100)}%</div>
+                  </label>
+                </div>
+              </section>
+            </>
+          ) : null}
+
+          {leftSidebarTab === "tools" ? (
             <section className="workspace__section">
-              <h3>画布设置</h3>
-              <div className="workspace__preset-grid">
-                {canvasPresets.map((preset) => (
+              <h3>工具入口</h3>
+              <div className="workspace__tool-stack">
+                {toolItemsAntd.filter((tool) => tool.id !== "hand").map((tool) => (
                   <button
-                    key={preset.id}
-                    className={`workspace__preset-button ${document.canvas.presetId === preset.id ? "is-active" : ""}`}
-                    onClick={() => setCanvasPreset(preset.id)}
+                    key={tool.id}
+                    aria-label={tool.label}
+                    className={`workspace__tool-button workspace__tool-button--compact ${activeTool === tool.id ? "is-active" : ""}`}
+                    onClick={() => handleToolClick(tool.id)}
                     type="button"
                   >
-                    <strong>{preset.label}</strong>
-                    {/* <div className="workspace__meta">{preset.width} × {preset.height}</div> */}
+                    <span className="workspace__tool-icon" aria-hidden="true">
+                      {tool.icon}
+                    </span>
+                    <strong>{tool.label}</strong>
+                    <Tooltip>{tool.hint}</Tooltip>
                   </button>
                 ))}
               </div>
-              <div className="workspace__property-list workspace__property-list--tight">
-                <label className="workspace__property">
-                  <span className="workspace__property-label">画布背景</span>
-                  <select
-                    className="workspace__select"
-                    onChange={(event) =>
-                      setCanvasDisplayBackground({
-                        mode: event.target.value as (typeof canvasBackgroundModes)[number]
-                      })
-                    }
-                    value={canvasDisplayBackground.mode}
-                  >
-                    <option value="grid">网格线</option>
-                    <option value="solid">纯色</option>
-                    <option value="dots">点阵</option>
-                  </select>
-                </label>
-                <label className="workspace__property">
-                  <span className="workspace__property-label">背景色</span>
-                  <input
-                    className="workspace__color-input workspace__color-input--wide"
-                    onChange={(event) =>
-                      setCanvasDisplayBackground({
-                        color: event.target.value
-                      })
-                    }
-                    type="color"
-                    value={canvasDisplayBackground.color}
-                  />
-                </label>
-                <label className="workspace__property">
-                  <span className="workspace__property-label">画布缩放</span>
-                  <input
-                    className="workspace__range"
-                    max={3}
-                    min={0.2}
-                    onChange={(event) => setCanvasViewport({ zoom: Number(event.target.value) })}
-                    step={0.01}
-                    type="range"
-                    value={viewport.zoom}
-                  />
-                  <div className="workspace__property-value">{Math.round(viewport.zoom * 100)}%</div>
-                </label>
+            </section>
+          ) : null}
+
+          {leftSidebarTab === "layers" ? (
+            <section className="workspace__section workspace__section--layers">
+              <h3>图层列表</h3>
+              <div className="workspace__layer-stack">
+                {[...document.layers]
+                  .sort((left, right) => right.zIndex - left.zIndex)
+                  .map((layer) => (
+                    <div
+                      key={layer.id}
+                      className={`workspace__layer-card ${selectedLayerIds.includes(layer.id) ? "is-active" : ""}`}
+                    >
+                      <button
+                        className="workspace__layer-button"
+                        onClick={() => {
+                          selectLayer(layer.id);
+                          setRightSidebarTab("layer");
+                        }}
+                        type="button"
+                      >
+                        <div className="workspace__layer-row">
+                          <strong>{layer.name}</strong>
+                        </div>
+                      </button>
+                      <div className="workspace__layer-actions">
+                        <button
+                          aria-label={layer.visible ? "隐藏图层" : "显示图层"}
+                          className="workspace__icon-button workspace__icon-button--visibility"
+                          onClick={() => toggleLayerVisibility(layer.id)}
+                          type="button"
+                        >
+                          <span aria-hidden="true">{layer.visible ? "👁" : "🙈"}</span>
+                          <Tooltip>{layer.visible ? "隐藏图层" : "显示图层"}</Tooltip>
+                        </button>
+                        <button
+                          aria-label={layer.locked ? "解锁图层" : "锁定图层"}
+                          className="workspace__icon-button workspace__icon-button--lock"
+                          onClick={() => toggleLayerLock(layer.id)}
+                          type="button"
+                        >
+                          <span aria-hidden="true">{layer.locked ? "🔓" : "🔒"}</span>
+                          <Tooltip>{layer.locked ? "解锁图层" : "锁定图层"}</Tooltip>
+                        </button>
+                        <button
+                          aria-label="上移图层"
+                          className="workspace__icon-button workspace__icon-button--up"
+                          onClick={() => moveLayer(layer.id, "up")}
+                          type="button"
+                        >
+                          <span aria-hidden="true">↑</span>
+                          <Tooltip>上移图层</Tooltip>
+                        </button>
+                        <button
+                          aria-label="下移图层"
+                          className="workspace__icon-button workspace__icon-button--down"
+                          onClick={() => moveLayer(layer.id, "down")}
+                          type="button"
+                        >
+                          <span aria-hidden="true">↓</span>
+                          <Tooltip>下移图层</Tooltip>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
               </div>
             </section>
-          </>
-        ) : null}
-
-        {leftSidebarTab === "tools" ? (
-          <section className="workspace__section">
-            <h3>工具入口</h3>
-            <div className="workspace__tool-stack">
-              {toolItemsAntd.filter((tool) => tool.id !== "hand").map((tool) => (
-                <button
-                  key={tool.id}
-                  aria-label={tool.label}
-                  className={`workspace__tool-button workspace__tool-button--compact ${activeTool === tool.id ? "is-active" : ""}`}
-                  onClick={() => handleToolClick(tool.id)}
-                  type="button"
-                >
-                  <span className="workspace__tool-icon" aria-hidden="true">
-                    {tool.icon}
-                  </span>
-                  <strong>{tool.label}</strong>
-                  <Tooltip>{tool.hint}</Tooltip>
-                </button>
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        {leftSidebarTab === "layers" ? (
-          <section className="workspace__section workspace__section--layers">
-            <div className="workspace__section-header">
-              <h3>图层列表</h3>
-              <div className="workspace__inline-actions">
-                <button className="workspace__tool-button workspace__tool-button--small" onClick={handleImportClick} type="button">
-                  导入图片
-                </button>
-                <button className="workspace__tool-button workspace__tool-button--small" onClick={addTextLayer} type="button">
-                  添加文字
-                </button>
-                <button className="workspace__tool-button workspace__tool-button--small" onClick={addDecorationLayer} type="button">
-                  添加装饰
-                </button>
-              </div>
-            </div>
-            <div className="workspace__layer-stack">
-              {[...document.layers]
-                .sort((left, right) => right.zIndex - left.zIndex)
-                .map((layer) => (
-                  <div
-                    key={layer.id}
-                    className={`workspace__layer-card ${selectedLayerIds.includes(layer.id) ? "is-active" : ""}`}
-                  >
-                    <button
-                      className="workspace__layer-button"
-                      onClick={() => {
-                        selectLayer(layer.id);
-                        setRightSidebarTab("layer");
-                      }}
-                      type="button"
-                    >
-                      <div className="workspace__layer-row">
-                        <strong>{layer.name}</strong>
-                        <span className="workspace__chip">Z{layer.zIndex}</span>
-                      </div>
-                      {renderLayerStatusChips(layer, selectedLayerIds.includes(layer.id))}
-                    </button>
-                    <div className="workspace__layer-actions">
-                      <button
-                        aria-label={layer.visible ? "隐藏图层" : "显示图层"}
-                        className="workspace__icon-button workspace__icon-button--visibility"
-                        onClick={() => toggleLayerVisibility(layer.id)}
-                        type="button"
-                      >
-                        <span aria-hidden="true">{layer.visible ? "👁" : "🙈"}</span>
-                        <Tooltip>{layer.visible ? "隐藏图层" : "显示图层"}</Tooltip>
-                      </button>
-                      <button
-                        aria-label={layer.locked ? "解锁图层" : "锁定图层"}
-                        className="workspace__icon-button workspace__icon-button--lock"
-                        onClick={() => toggleLayerLock(layer.id)}
-                        type="button"
-                      >
-                        <span aria-hidden="true">{layer.locked ? "🔓" : "🔒"}</span>
-                        <Tooltip>{layer.locked ? "解锁图层" : "锁定图层"}</Tooltip>
-                      </button>
-                      <button
-                        aria-label="上移图层"
-                        className="workspace__icon-button workspace__icon-button--up"
-                        onClick={() => moveLayer(layer.id, "up")}
-                        type="button"
-                      >
-                        <span aria-hidden="true">↑</span>
-                        <Tooltip>上移图层</Tooltip>
-                      </button>
-                      <button
-                        aria-label="下移图层"
-                        className="workspace__icon-button workspace__icon-button--down"
-                        onClick={() => moveLayer(layer.id, "down")}
-                        type="button"
-                      >
-                        <span aria-hidden="true">↓</span>
-                        <Tooltip>下移图层</Tooltip>
-                      </button>
-                    </div>
-                  </div>
-                ))}
-            </div>
-          </section>
-        ) : null}
+          ) : null}
+        </div>
       </aside>
 
       <main className="workspace__canvas-layout">
@@ -1531,10 +1908,13 @@ export function EditorWorkspace() {
               </p>
             </div>
             <div className="workspace__toolbar-actions">
-              <button className="workspace__tool-button" disabled={!canUndo} onClick={undo} type="button">
+              <button className="workspace__tool-button workspace__tool-button--overlay-label" data-label="撤销" disabled={!canUndo} onClick={undo} type="button">
                 撤销
               </button>
-              <button className="workspace__tool-button" onClick={handleClearCanvas} type="button">
+              <button className="workspace__tool-button workspace__tool-button--overlay-label" data-label="重做" disabled={!canRedo} onClick={redo} type="button">
+                é‡åš
+              </button>
+              <button className="workspace__tool-button workspace__tool-button--overlay-label" data-label="清空" onClick={handleClearCanvas} type="button">
                 重做
               </button>
               <button className="workspace__tool-button" onClick={handleImportClick} type="button">
@@ -1543,6 +1923,9 @@ export function EditorWorkspace() {
               <button className="workspace__tool-button" onClick={addTextLayer} type="button">
                 添加文字
               </button>
+              <button className="workspace__tool-button" onClick={addDecorationLayer} type="button">
+                添加装饰
+              </button>
             </div>
           </div>
 
@@ -1550,8 +1933,10 @@ export function EditorWorkspace() {
             activeTool={activeTool}
             cropSession={cropSession}
             document={document}
+            maskSelectionMode={maskSelectionMode}
             onCropSessionChange={updateCropSession}
-            onDoodleCommit={addDoodleLayer}
+            doodleStyle={doodleStyle}
+            onDoodleCommit={handleDoodleCommit}
             onMaskAppend={appendMaskPoint}
             onMaskFinish={finishMaskStroke}
             onMaskStart={startMaskStroke}
@@ -1596,30 +1981,34 @@ export function EditorWorkspace() {
           </button>
         </div>
 
-        {rightSidebarTab === "tool" ? (
-          <section className="workspace__section">
-            <h2>工具属性</h2>
-            {renderToolProperties()}
-          </section>
-        ) : null}
+        <div className="workspace__panel-content">
+          {rightSidebarTab === "tool" ? (
+            <section className="workspace__section">
+              <h2>工具属性</h2>
+              <br />
+              {renderToolProperties()}
+            </section>
+          ) : null}
 
-        {rightSidebarTab === "layer" ? (
-          <section className="workspace__section">
-            <h2>图层控制</h2>
-            {renderLayerProperties()}
-          </section>
-        ) : null}
+          {rightSidebarTab === "layer" ? (
+            <section className="workspace__section">
+              <h2>图层控制</h2>
+              <br />
+              {renderLayerProperties()}
+            </section>
+          ) : null}
 
-        {lastExportedFilename || feedbackMessage ? (
-          <section className="workspace__section workspace__section--feedback">
-            <div className="workspace__property-list workspace__property-list--tight">
-              {lastExportedFilename ? (
-                <p className="workspace__footer-note">Last export: {lastExportedFilename}</p>
-              ) : null}
-              {feedbackMessage ? <p className="workspace__footer-note">{feedbackMessage}</p> : null}
-            </div>
-          </section>
-        ) : null}
+          {lastExportedFilename || feedbackMessage ? (
+            <section className="workspace__section workspace__section--feedback">
+              <div className="workspace__property-list workspace__property-list--tight">
+                {lastExportedFilename ? (
+                  <p className="workspace__footer-note">Last export: {lastExportedFilename}</p>
+                ) : null}
+                {feedbackMessage ? <p className="workspace__footer-note">{feedbackMessage}</p> : null}
+              </div>
+            </section>
+          ) : null}
+        </div>
       </aside>
 
       {isExportDialogOpen ? (

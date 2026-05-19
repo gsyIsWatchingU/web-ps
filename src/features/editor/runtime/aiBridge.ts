@@ -13,30 +13,49 @@ type AiEditInput = {
   size: `${number}x${number}`;
 };
 
-type AiJsonSuccessPayload = {
-  data?: Array<{
-    b64_json?: string;
-    url?: string;
-  }>;
-};
-
-type AiJsonErrorPayload = {
-  error?: {
-    message?: string;
+type DashScopeTaskCreatePayload = {
+  output?: {
+    task_id?: string;
+    task_status?: string;
   };
+  code?: string;
+  message?: string;
 };
 
-function dataUrlToBlob(dataUrl: string) {
-  const [header, base64] = dataUrl.split(",");
-  const mimeType = header.match(/data:(.*?);base64/)?.[1] ?? "image/png";
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
+type DashScopeTaskResultPayload = {
+  output?: {
+    task_status?: string;
+    code?: string;
+    message?: string;
+    results?: Array<{
+      url?: string;
+    }>;
+  };
+  code?: string;
+  message?: string;
+};
 
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
+function getDashScopeApiBase() {
+  const baseUrl = aiConfig.baseURL.replace(/\/$/, "");
+  const origin = new URL(baseUrl).origin;
+
+  return `${origin}/api/v1`;
+}
+
+function getDashScopeImageSynthesisEndpoint() {
+  if (typeof window !== "undefined" && ["localhost", "127.0.0.1", "0.0.0.0"].includes(window.location.hostname)) {
+    return "/api/ai/services/aigc/image2image/image-synthesis";
   }
 
-  return new Blob([bytes], { type: mimeType });
+  return `${getDashScopeApiBase()}/services/aigc/image2image/image-synthesis`;
+}
+
+function getDashScopeTaskEndpoint(taskId: string) {
+  if (typeof window !== "undefined" && ["localhost", "127.0.0.1", "0.0.0.0"].includes(window.location.hostname)) {
+    return `/api/ai/tasks/${taskId}`;
+  }
+
+  return `${getDashScopeApiBase()}/tasks/${taskId}`;
 }
 
 async function blobToDataUrl(blob: Blob) {
@@ -49,10 +68,10 @@ async function blobToDataUrl(blob: Blob) {
         return;
       }
 
-      reject(new Error("无法把 AI 返回图片转换成可预览的数据格式。"));
+      reject(new Error("AI 返回图片读取失败。"));
     };
 
-    reader.onerror = () => reject(new Error("无法读取 AI 返回的图片结果。"));
+    reader.onerror = () => reject(new Error("AI 返回图片读取失败。"));
     reader.readAsDataURL(blob);
   });
 }
@@ -60,7 +79,7 @@ async function blobToDataUrl(blob: Blob) {
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
   return new Promise<T>((resolve, reject) => {
     const timer = window.setTimeout(() => {
-      reject(new Error("AI 请求超时，请稍后重试。"));
+      reject(new Error("AI 处理超时，请稍后重试。"));
     }, timeoutMs);
 
     promise
@@ -75,83 +94,109 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
   });
 }
 
-function isSuccessPayload(payload: unknown): payload is AiJsonSuccessPayload {
-  return typeof payload === "object" && payload !== null && "data" in payload;
+function wait(ms: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
-function isErrorPayload(payload: unknown): payload is AiJsonErrorPayload {
-  return typeof payload === "object" && payload !== null && "error" in payload;
-}
+async function fetchResultAsDataUrl(url: string) {
+  const response = await fetch(url);
 
-async function normalizeImageResult(response: Response) {
-  const contentType = response.headers.get("content-type") ?? "";
-
-  if (contentType.includes("application/json")) {
-    const payload = (await response.json()) as unknown;
-
-    if (isSuccessPayload(payload)) {
-      const record = payload.data?.[0];
-
-      if (record?.b64_json) {
-        return `data:image/png;base64,${record.b64_json}`;
-      }
-
-      if (record?.url) {
-        return record.url;
-      }
-    }
-
-    if (isErrorPayload(payload)) {
-      throw new Error(payload.error?.message ?? "AI 没有返回可用的图片结果。");
-    }
-
-    throw new Error("AI 返回格式不符合预期，暂时无法解析。");
+  if (!response.ok) {
+    throw new Error(`AI 结果图片下载失败（${response.status}）。`);
   }
 
-  const blob = await response.blob();
-  return blobToDataUrl(blob);
+  return blobToDataUrl(await response.blob());
 }
 
-async function callOpenAiCompatibleEdit(input: AiEditInput): Promise<AiBridgeResult> {
+async function createDashScopeTask(input: AiEditInput) {
+  const response = await fetch(getDashScopeImageSynthesisEndpoint(), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${aiConfig.apiKey}`,
+      "Content-Type": "application/json",
+      "X-DashScope-Async": "enable"
+    },
+    body: JSON.stringify({
+      model: aiConfig.model,
+      input: {
+        function: "description_edit_with_mask",
+        prompt: input.prompt?.trim() || "修复遮罩区域，使结果自然、边缘融合。",
+        base_image_url: input.sourceDataUrl,
+        mask_image_url: input.maskDataUrl
+      },
+      parameters: {
+        n: 1
+      }
+    })
+  });
+
+  const payload = (await response.json()) as DashScopeTaskCreatePayload;
+
+  if (!response.ok) {
+    throw new Error(payload.message || payload.code || `AI 修复任务创建失败（${response.status}）。`);
+  }
+
+  const taskId = payload.output?.task_id;
+
+  if (!taskId) {
+    throw new Error("AI 修复任务创建成功，但没有返回 task_id。");
+  }
+
+  return taskId;
+}
+
+async function pollDashScopeTask(taskId: string) {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < aiConfig.timeoutMs) {
+    const response = await fetch(getDashScopeTaskEndpoint(taskId), {
+      headers: {
+        Authorization: `Bearer ${aiConfig.apiKey}`
+      }
+    });
+
+    const payload = (await response.json()) as DashScopeTaskResultPayload;
+
+    if (!response.ok) {
+      throw new Error(payload.message || payload.code || `AI 修复任务查询失败（${response.status}）。`);
+    }
+
+    const status = payload.output?.task_status;
+
+    if (status === "SUCCEEDED") {
+      const url = payload.output?.results?.[0]?.url;
+
+      if (!url) {
+        throw new Error("AI 修复成功，但没有返回结果图片。");
+      }
+
+      return fetchResultAsDataUrl(url);
+    }
+
+    if (status === "FAILED" || status === "CANCELED" || status === "UNKNOWN") {
+      throw new Error(payload.output?.message || payload.output?.code || `AI 修复失败，任务状态：${status}。`);
+    }
+
+    await wait(1500);
+  }
+
+  throw new Error("AI 修复超时，请稍后重试。");
+}
+
+async function callDashScopeMaskedEdit(input: AiEditInput): Promise<AiBridgeResult> {
   if (!hasAiConfig()) {
     return {
       success: false,
       imageDataUrl: null,
-      errorMessage:
-        "请先在 aiConfig.ts 中填写 baseURL、apiKey 和 model，然后再执行 AI 修图。"
+      errorMessage: "请先在 aiConfig.ts 中配置 DashScope 的 baseURL、apiKey 和 model。"
     };
   }
 
-  const formData = new FormData();
-  formData.append("model", aiConfig.model);
-  formData.append("prompt", input.prompt);
-  formData.append("size", input.size);
-  formData.append("response_format", "b64_json");
-  formData.append("image", dataUrlToBlob(input.sourceDataUrl), "image.png");
-  formData.append("mask", dataUrlToBlob(input.maskDataUrl), "mask.png");
-
   try {
-    const response = await withTimeout(
-      fetch(`${aiConfig.baseURL.replace(/\/$/, "")}/images/edits`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${aiConfig.apiKey}`
-        },
-        body: formData
-      }),
-      aiConfig.timeoutMs
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      return {
-        success: false,
-        imageDataUrl: null,
-        errorMessage: errorText || `AI 请求失败，状态码 ${response.status}。`
-      };
-    }
-
-    const imageDataUrl = await normalizeImageResult(response);
+    const taskId = await withTimeout(createDashScopeTask(input), aiConfig.timeoutMs);
+    const imageDataUrl = await withTimeout(pollDashScopeTask(taskId), aiConfig.timeoutMs + 15_000);
 
     return {
       success: true,
@@ -162,15 +207,15 @@ async function callOpenAiCompatibleEdit(input: AiEditInput): Promise<AiBridgeRes
     return {
       success: false,
       imageDataUrl: null,
-      errorMessage: error instanceof Error ? error.message : "AI 请求失败，请稍后重试。"
+      errorMessage: error instanceof Error ? error.message : "AI 修复失败。"
     };
   }
 }
 
 export async function inpaintImage(input: AiEditInput) {
-  return callOpenAiCompatibleEdit(input);
+  return callDashScopeMaskedEdit(input);
 }
 
 export async function outpaintImage(input: AiEditInput) {
-  return callOpenAiCompatibleEdit(input);
+  return callDashScopeMaskedEdit(input);
 }
