@@ -814,6 +814,10 @@ button {
   margin-top: 12px;
 }
 
+.workspace__property-list--nested {
+  margin-top: 12px;
+}
+
 .workspace__property-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -923,8 +927,12 @@ button {
   display: none;
 }
 
-.workspace__section--layers .workspace__layer-meta .workspace__chip:nth-child(2),
-.workspace__section--layers .workspace__layer-meta .workspace__chip:nth-child(3) {
+.workspace__property summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.workspace__property summary::-webkit-details-marker {
   display: none;
 }
 

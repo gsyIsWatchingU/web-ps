@@ -2,6 +2,9 @@ import { z } from "zod";
 import {
   canvasBackgroundModes,
   canvasPresets,
+  decorationKinds,
+  decorationShapeIds,
+  decorationStickerIds,
   enhanceProfileIds,
   imagePresetFilterIds,
   layerTypes,
@@ -36,6 +39,21 @@ const enhanceProfileValues = [...enhanceProfileIds] as [
 const canvasBackgroundModeValues = [...canvasBackgroundModes] as [
   (typeof canvasBackgroundModes)[number],
   ...(typeof canvasBackgroundModes)[number][]
+];
+
+const decorationKindValues = [...decorationKinds] as [
+  (typeof decorationKinds)[number],
+  ...(typeof decorationKinds)[number][]
+];
+
+const decorationShapeValues = [...decorationShapeIds] as [
+  (typeof decorationShapeIds)[number],
+  ...(typeof decorationShapeIds)[number][]
+];
+
+const decorationStickerValues = [...decorationStickerIds] as [
+  (typeof decorationStickerIds)[number],
+  ...(typeof decorationStickerIds)[number][]
 ];
 
 const transformSchema = z.object({
@@ -73,6 +91,7 @@ const imageLayerSchema = layerBaseSchema.extend({
   presetFilterId: z.enum(imagePresetValues).nullable(),
   enhanceProfileId: z.enum(enhanceProfileValues).nullable(),
   filters: z.object({
+    intensity: z.number().default(100),
     brightness: z.number(),
     contrast: z.number(),
     saturation: z.number(),
@@ -129,7 +148,28 @@ const textLayerSchema = layerBaseSchema.extend({
 
 const decorationLayerSchema = layerBaseSchema.extend({
   type: z.literal("decoration"),
-  shape: z.enum(["ribbon", "badge", "highlight"]),
+  decorationKind: z.enum(decorationKindValues).default("shape"),
+  shape: z
+    .enum(decorationShapeValues)
+    .or(z.enum(["ribbon", "badge", "highlight"]))
+    .transform((value) => {
+      if (value === "badge") {
+        return "heart";
+      }
+
+      if (value === "ribbon") {
+        return "rectangle";
+      }
+
+      if (value === "highlight") {
+        return "rectangle";
+      }
+
+      return value;
+    }),
+  sticker: z.enum(decorationStickerValues).default("sparkle"),
+  width: z.number().positive().default(220),
+  height: z.number().positive().default(140),
   fill: z.string()
 });
 

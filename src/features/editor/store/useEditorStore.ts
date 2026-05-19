@@ -12,6 +12,7 @@ import {
   createLayerId,
   createStrokeId,
   getCanvasPreset,
+  getDecorationDefaultSize,
   getDefaultSafeAreaInset,
   getEnhanceProfile,
   getImageFilterPreset,
@@ -19,7 +20,10 @@ import {
   normalizeLayerOrder,
   type CanvasPresetId,
   type CanvasViewport,
+  type DecorationKind,
   type DecorationLayer,
+  type DecorationShapeId,
+  type DecorationStickerId,
   type DoodleLayer,
   type DoodlePoint,
   type EditorDocument,
@@ -98,7 +102,13 @@ type EditorStore = {
   updateImageCrop: (layerId: string, crop: Partial<ImageCrop>) => void;
   setImageCropAspect: (layerId: string, aspectRatio: number | null) => void;
   resetImageCrop: (layerId: string) => void;
+  updateDecorationKind: (layerId: string, decorationKind: DecorationKind) => void;
   updateDecorationShape: (layerId: string, shape: DecorationLayer["shape"]) => void;
+  updateDecorationSticker: (layerId: string, sticker: DecorationLayer["sticker"]) => void;
+  updateDecorationSize: (
+    layerId: string,
+    size: Partial<Pick<DecorationLayer, "width" | "height">>
+  ) => void;
   updateDecorationFill: (layerId: string, fill: string) => void;
   updateDoodleStyle: (
     layerId: string,
@@ -312,6 +322,11 @@ function loadInitialDocument(): EditorDocument {
 
 const initialDocument: EditorDocument = loadInitialDocument();
 
+function getDefaultSelectedLayerIds(document: EditorDocument) {
+  const defaultLayerId = document.layers[1]?.id ?? document.layers[0]?.id;
+  return defaultLayerId ? [defaultLayerId] : [];
+}
+
 function stripTransientDocumentState(document: EditorDocument): EditorDocument {
   return {
     ...document,
@@ -425,6 +440,15 @@ function sanitizeImageCrop(layer: ImageLayer, crop: Partial<ImageCrop>) {
   } satisfies ImageCrop;
 }
 
+function sanitizeDecorationSize(size: Partial<Pick<DecorationLayer, "width" | "height">>) {
+  return {
+    width:
+      size.width === undefined ? undefined : clamp(Math.round(size.width), 24, 1200),
+    height:
+      size.height === undefined ? undefined : clamp(Math.round(size.height), 24, 1200)
+  };
+}
+
 function createDoodleLayer(
   points: DoodlePoint[],
   zIndex: number,
@@ -498,12 +522,9 @@ function getLayerSize(layer: EditorLayer) {
     };
   }
 
-  const width = layer.shape === "highlight" ? 300 : 240;
-  const height = layer.shape === "ribbon" ? 86 : 120;
-
   return {
-    width: width * layer.transform.scaleX,
-    height: height * layer.transform.scaleY
+    width: layer.width * layer.transform.scaleX,
+    height: layer.height * layer.transform.scaleY
   };
 }
 
@@ -640,7 +661,7 @@ async function createOutpaintPayload(layer: ImageLayer, targetRatio: number) {
 
 export const useEditorStore = create<EditorStore>((set, get) => ({
   activeTool: "select",
-  selectedLayerIds: [initialDocument.layers[1]?.id ?? initialDocument.layers[0].id],
+  selectedLayerIds: getDefaultSelectedLayerIds(initialDocument),
   document: initialDocument,
   cropSession: null,
   historyPast: [],
@@ -792,6 +813,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     }),
   addDecorationLayer: () =>
     set((state) => {
+      const defaultSize = getDecorationDefaultSize("shape", "heart");
       const nextLayer: DecorationLayer = {
         id: createLayerId("decoration"),
         type: "decoration",
@@ -803,10 +825,14 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         transform: createCenteredTransform(
           state.document.canvas.width,
           state.document.canvas.height,
-          240,
-          120
+          defaultSize.width,
+          defaultSize.height
         ),
-        shape: "highlight",
+        decorationKind: "shape",
+        shape: "heart",
+        sticker: "sparkle",
+        width: defaultSize.width,
+        height: defaultSize.height,
         fill: "#cf5b2d"
       };
       const normalized = normalizeLayerOrder([...state.document.layers, nextLayer]);
@@ -1077,7 +1103,6 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
             layer.id === layerId && layer.type === "image"
               ? {
                   ...layer,
-                  presetFilterId: null,
                   enhanceProfileId: null,
                   filters: {
                     ...layer.filters,
@@ -1194,6 +1219,28 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         )
       )
     ),
+  updateDecorationKind: (layerId, decorationKind) =>
+    set((state) =>
+      commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) => {
+            if (layer.id !== layerId || layer.type !== "decoration") {
+              return layer;
+            }
+
+            const defaultSize = getDecorationDefaultSize(decorationKind, layer.shape);
+
+            return {
+              ...layer,
+              decorationKind,
+              width: defaultSize.width,
+              height: defaultSize.height
+            };
+          })
+        )
+      )
+    ),
   updateDoodleStyle: (layerId, style) =>
     set((state) =>
       commitDocumentChange(
@@ -1217,14 +1264,57 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       commitDocumentChange(
         state,
         updateLayers(state.document, (layers) =>
+          layers.map((layer) => {
+            if (layer.id !== layerId || layer.type !== "decoration") {
+              return layer;
+            }
+
+            const defaultSize = getDecorationDefaultSize(layer.decorationKind, shape);
+
+            return {
+              ...layer,
+              shape,
+              width: layer.decorationKind === "shape" ? defaultSize.width : layer.width,
+              height: layer.decorationKind === "shape" ? defaultSize.height : layer.height
+            };
+          })
+        )
+      )
+    ),
+  updateDecorationSticker: (layerId, sticker) =>
+    set((state) =>
+      commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
           layers.map((layer) =>
             layer.id === layerId && layer.type === "decoration"
               ? {
                   ...layer,
-                  shape
+                  sticker
                 }
               : layer
           )
+        )
+      )
+    ),
+  updateDecorationSize: (layerId, size) =>
+    set((state) =>
+      commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) => {
+            if (layer.id !== layerId || layer.type !== "decoration") {
+              return layer;
+            }
+
+            const nextSize = sanitizeDecorationSize(size);
+
+            return {
+              ...layer,
+              width: nextSize.width ?? layer.width,
+              height: nextSize.height ?? layer.height
+            };
+          })
         )
       )
     ),

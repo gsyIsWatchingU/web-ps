@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type ReactNode } from "react";
+import { startTransition, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type ReactNode } from "react";
 import {
   canvasBackgroundModes,
   canvasPresets,
@@ -13,12 +13,12 @@ import {
   type EditorDocument,
   type EditorLayer,
   type ExportSizePreset,
-  type ImageFilters,
   type ImageCrop,
   type TextLayer
 } from "../model/document";
 import { hasAiConfig } from "../runtime/aiConfig";
 import { exportDocument } from "../runtime/exportDocument";
+import { renderPresetPreviewDataUrl } from "../runtime/lutEngine";
 import { useEditorStore } from "../store/useEditorStore";
 import { CanvasViewport, type MaskSelectionMode } from "./CanvasViewport";
 import { useMessage } from "../../../shared/message";
@@ -62,14 +62,42 @@ const cropAspectOptions: Array<{ label: string; value: number | null }> = [
 
 ];
 
+// Legacy options kept only to avoid touching surrounding encoded text.
 const decorationShapeOptions: Array<{
-  value: DecorationLayer["shape"];
+  value: string;
   label: string;
 }> = [
     { value: "highlight", label: "高亮条" },
     { value: "badge", label: "徽章" },
     { value: "ribbon", label: "缎带" }
   ];
+const decorationKindSelectOptions: Array<{
+  value: DecorationLayer["decorationKind"];
+  label: string;
+}> = [
+  { value: "shape", label: "形状" },
+  { value: "sticker", label: "贴纸" }
+];
+
+const decorationShapeSelectOptions: Array<{
+  value: DecorationLayer["shape"];
+  label: string;
+}> = [
+  { value: "heart", label: "心形" },
+  { value: "circle", label: "圆形" },
+  { value: "rectangle", label: "长方形" }
+];
+
+const decorationStickerSelectOptions: Array<{
+  value: DecorationLayer["sticker"];
+  label: string;
+}> = [
+  { value: "star", label: "星星" },
+  { value: "ribbon", label: "蝴蝶结" },
+  { value: "bear", label: "小熊" },
+  { value: "strawberry", label: "草莓" },
+  { value: "sparkle", label: "闪光" }
+];
 
 const fontWeightOptions: Array<{
   value: TextLayer["style"]["fontWeight"];
@@ -150,34 +178,6 @@ function getScaledDimensions(canvasWidth: number, canvasHeight: number, scalePer
 
 const IMAGE_REQUIRED_TOOLS: ToolId[] = ["crop", "brush", "eraser", "repair", "filter"];
 const FILTER_PREVIEW_SOURCE = "/help/filter-preview-sample.svg";
-
-function clampPreviewValue(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function buildFilterPreviewStyle(filters: ImageFilters): CSSProperties {
-  const brightness = clampPreviewValue(1 + filters.brightness * 2.2, 0.72, 1.45);
-  const contrast = clampPreviewValue(1 + filters.contrast * 3.2, 0.7, 1.9);
-  const saturation = clampPreviewValue(1 + filters.saturation * 3.2, 0, 2.2);
-  const vibrance = clampPreviewValue(1 + filters.vibrance * 2.4, 0.45, 1.95);
-  const grayscale = clampPreviewValue(Math.max(-(filters.saturation + filters.vibrance * 0.35), 0) * 1.1, 0, 1);
-  const blur = clampPreviewValue(filters.blur * 10, 0, 4);
-  const sepia = clampPreviewValue(Math.max(filters.temperature, 0) * 0.18, 0, 0.16);
-  const hueRotate = `${Math.round((filters.hue + filters.temperature * -0.18) * 120)}deg`;
-
-  return {
-    filter: [
-      `brightness(${brightness})`,
-      `contrast(${contrast})`,
-      `saturate(${saturation})`,
-      `saturate(${vibrance})`,
-      `grayscale(${grayscale})`,
-      `blur(${blur}px)`,
-      `sepia(${sepia})`,
-      `hue-rotate(${hueRotate})`
-    ].join(" ")
-  };
-}
 
 function buildPersistedDraft(document: EditorDocument, savedAt: string): EditorDocument {
   return {
@@ -368,6 +368,9 @@ export function EditorWorkspace() {
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [doodleStyle, setDoodleStyle] = useState(createDefaultDoodleStyle);
   const [maskSelectionMode, setMaskSelectionMode] = useState<MaskSelectionMode>("rectangle");
+  const [filterPreviewSources, setFilterPreviewSources] = useState<
+    Record<(typeof imageFilterPresets)[number]["id"], string>
+  >({} as Record<(typeof imageFilterPresets)[number]["id"], string>);
   const {
     activeTool,
     cropSession,
@@ -413,8 +416,11 @@ export function EditorWorkspace() {
     updateAiExpandPrompt,
     updateAiPrompt,
     updateCropSession,
+    updateDecorationKind,
     updateDecorationFill,
     updateDecorationShape,
+    updateDecorationSize,
+    updateDecorationSticker,
     updateDoodleStyle,
     updateExportConfig,
     updateImageFilters,
@@ -441,21 +447,6 @@ export function EditorWorkspace() {
   const viewport = document.canvas.viewport;
   const canvasDisplayBackground = document.canvas.displayBackground;
   const aiConfigured = hasAiConfig();
-  const filterPreviewMap = useMemo(
-    () =>
-      Object.fromEntries(imageFilterPresets.map((preset) => [preset.id, FILTER_PREVIEW_SOURCE])) as Record<
-        (typeof imageFilterPresets)[number]["id"],
-        string
-      >,
-    []
-  );
-  const filterPreviewStyleMap = useMemo(
-    () =>
-      Object.fromEntries(
-        imageFilterPresets.map((preset) => [preset.id, buildFilterPreviewStyle(preset.filters)])
-      ) as Record<(typeof imageFilterPresets)[number]["id"], CSSProperties>,
-    []
-  );
   const activeCropDraft =
     cropSession && selectedImageLayer && cropSession.layerId === selectedImageLayer.id
       ? cropSession.draft
@@ -470,6 +461,33 @@ export function EditorWorkspace() {
   );
   const showCropProperties = activeTool === "crop" && selectedImageLayer !== null;
   const activeToolNeedsImageLayer = IMAGE_REQUIRED_TOOLS.includes(activeTool);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      const entries = await Promise.all(
+        imageFilterPresets.map(async (preset) => [
+          preset.id,
+          await renderPresetPreviewDataUrl(FILTER_PREVIEW_SOURCE, preset.id)
+        ] as const)
+      );
+
+      if (cancelled) {
+        return;
+      }
+
+      startTransition(() => {
+        setFilterPreviewSources(
+          Object.fromEntries(entries) as Record<(typeof imageFilterPresets)[number]["id"], string>
+        );
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const requireSelectedImageLayer = (toolId: ToolId) => {
     if (!IMAGE_REQUIRED_TOOLS.includes(toolId)) {
@@ -833,12 +851,42 @@ export function EditorWorkspace() {
     if (selectedImageLayer) {
       const filterAdjustmentControls = (
         [
-          ["brightness", "亮度", -1, 1, 0.01],
-          ["contrast", "对比度", -1, 1, 0.01],
-          ["saturation", "饱和度", -1, 1, 0.01],
-          ["blur", "模糊", 0, 1, 0.01],
-          ["sharpen", "锐化", 0, 1, 0.01],
-          ["temperature", "色温", -1, 1, 0.01]
+          ["intensity", "滤镜强度", 0, 100, 1],
+          ["brightness", "亮度微调", -0.4, 0.4, 0.01],
+          ["contrast", "对比微调", -0.4, 0.4, 0.01],
+          ["saturation", "饱和微调", -0.4, 0.4, 0.01]
+        ] as const
+      ).map(([key, label, min, max, step]) => (
+        <label className="workspace__property" key={key}>
+          <span className="workspace__property-label">{label}</span>
+          <input
+            className="workspace__range"
+            max={max}
+            min={min}
+            onChange={(event) =>
+              updateImageFilters(selectedImageLayer.id, {
+                [key]: Number(event.target.value)
+              })
+            }
+            step={step}
+            type="range"
+            value={selectedImageLayer.filters[key]}
+          />
+          <div className="workspace__property-value">
+            {key === "intensity"
+              ? `${Math.round(selectedImageLayer.filters[key])}%`
+              : selectedImageLayer.filters[key].toFixed(2)}
+          </div>
+        </label>
+      ));
+
+      const advancedAdjustmentControls = (
+        [
+          ["vibrance", "自然饱和", -0.4, 0.4, 0.01],
+          ["temperature", "冷暖平衡", -0.4, 0.4, 0.01],
+          ["hue", "色相偏移", -0.4, 0.4, 0.01],
+          ["sharpen", "清晰增强", 0, 0.4, 0.01],
+          ["blur", "柔化", 0, 0.2, 0.01]
         ] as const
       ).map(([key, label, min, max, step]) => (
         <label className="workspace__property" key={key}>
@@ -980,12 +1028,11 @@ export function EditorWorkspace() {
                     type="button"
                   >
                     <div className="workspace__filter-preview-image-shell">
-                      {filterPreviewMap[preset.id] ? (
+                      {filterPreviewSources[preset.id] ? (
                         <img
                           alt={preset.label}
                           className="workspace__filter-preview-image"
-                          src={filterPreviewMap[preset.id]}
-                          style={filterPreviewStyleMap[preset.id]}
+                          src={filterPreviewSources[preset.id]}
                         />
                       ) : (
                         <div className="workspace__filter-preview-placeholder">预览生成中</div>
@@ -1021,6 +1068,13 @@ export function EditorWorkspace() {
             </div>
 
             {filterAdjustmentControls}
+
+            <details className="workspace__property">
+              <summary className="workspace__property-label">高级微调</summary>
+              <div className="workspace__property-list workspace__property-list--nested">
+                {advancedAdjustmentControls}
+              </div>
+            </details>
           </div>
         );
       }
@@ -1210,12 +1264,15 @@ export function EditorWorkspace() {
                   type="button"
                 >
                   <div className="workspace__filter-preview-image-shell">
-                    <img
-                      alt={preset.label}
-                      className="workspace__filter-preview-image"
-                      src={FILTER_PREVIEW_SOURCE}
-                      style={buildFilterPreviewStyle(preset.filters)}
-                    />
+                    {filterPreviewSources[preset.id] ? (
+                      <img
+                        alt={preset.label}
+                        className="workspace__filter-preview-image"
+                        src={filterPreviewSources[preset.id]}
+                      />
+                    ) : (
+                      <div className="workspace__filter-preview-placeholder">é¢„è§ˆç”Ÿæˆä¸­</div>
+                    )}
                   </div>
                   {selectedImageLayer.presetFilterId === preset.id ? (
                     <span className="workspace__filter-preview-badge">已选</span>
@@ -1251,12 +1308,10 @@ export function EditorWorkspace() {
 
           {(
             [
-              ["brightness", "亮度", -1, 1, 0.01],
-              ["contrast", "对比度", -1, 1, 0.01],
-              ["saturation", "饱和度", -1, 1, 0.01],
-              ["blur", "模糊", 0, 1, 0.01],
-              ["sharpen", "锐化", 0, 1, 0.01],
-              ["temperature", "色温", -1, 1, 0.01]
+              ["intensity", "滤镜强度", 0, 100, 1],
+              ["brightness", "亮度微调", -0.4, 0.4, 0.01],
+              ["contrast", "对比微调", -0.4, 0.4, 0.01],
+              ["saturation", "饱和微调", -0.4, 0.4, 0.01]
             ] as const
           ).map(([key, label, min, max, step]) => (
             <label className="workspace__property" key={key}>
@@ -1274,7 +1329,11 @@ export function EditorWorkspace() {
                 type="range"
                 value={selectedImageLayer.filters[key]}
               />
-              <div className="workspace__property-value">{selectedImageLayer.filters[key].toFixed(2)}</div>
+              <div className="workspace__property-value">
+                {key === "intensity"
+                  ? `${Math.round(selectedImageLayer.filters[key])}%`
+                  : selectedImageLayer.filters[key].toFixed(2)}
+              </div>
             </label>
           ))}
 
@@ -1468,16 +1527,132 @@ export function EditorWorkspace() {
       return (
         <div className="workspace__property-list">
           <label className="workspace__property">
+            <span className="workspace__property-label">装饰分类</span>
+            <select
+              className="workspace__select"
+              onChange={(event) =>
+                updateDecorationKind(
+                  selectedDecorationLayer.id,
+                  event.target.value as DecorationLayer["decorationKind"]
+                )
+              }
+              value={selectedDecorationLayer.decorationKind}
+            >
+              {decorationKindSelectOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {selectedDecorationLayer.decorationKind === "shape" ? (
+            <label className="workspace__property">
+              <span className="workspace__property-label">装饰形状</span>
+              <select
+                className="workspace__select"
+                onChange={(event) =>
+                  updateDecorationShape(
+                    selectedDecorationLayer.id,
+                    event.target.value as DecorationLayer["shape"]
+                  )
+                }
+                value={selectedDecorationLayer.shape}
+              >
+                {decorationShapeSelectOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <label className="workspace__property">
+              <span className="workspace__property-label">贴纸样式</span>
+              <select
+                className="workspace__select"
+                onChange={(event) =>
+                  updateDecorationSticker(
+                    selectedDecorationLayer.id,
+                    event.target.value as DecorationLayer["sticker"]
+                  )
+                }
+                value={selectedDecorationLayer.sticker}
+              >
+                {decorationStickerSelectOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <div className="workspace__property-grid">
+            <label className="workspace__property">
+              <span className="workspace__property-label">宽度</span>
+              <input
+                className="workspace__range"
+                max={800}
+                min={24}
+                onChange={(event) =>
+                  updateDecorationSize(selectedDecorationLayer.id, {
+                    width: Number(event.target.value)
+                  })
+                }
+                step={1}
+                type="range"
+                value={selectedDecorationLayer.width}
+              />
+              <div className="workspace__property-value">{selectedDecorationLayer.width}px</div>
+            </label>
+            <label className="workspace__property">
+              <span className="workspace__property-label">高度</span>
+              <input
+                className="workspace__range"
+                max={800}
+                min={24}
+                onChange={(event) =>
+                  updateDecorationSize(selectedDecorationLayer.id, {
+                    height: Number(event.target.value)
+                  })
+                }
+                step={1}
+                type="range"
+                value={selectedDecorationLayer.height}
+              />
+              <div className="workspace__property-value">{selectedDecorationLayer.height}px</div>
+            </label>
+          </div>
+          {selectedDecorationLayer.decorationKind === "shape" ? (
+            <label className="workspace__property">
+              <span className="workspace__property-label">填充颜色</span>
+              <input
+                className="workspace__color-input workspace__color-input--wide"
+                onChange={(event) => updateDecorationFill(selectedDecorationLayer.id, event.target.value)}
+                type="color"
+                value={selectedDecorationLayer.fill}
+              />
+            </label>
+          ) : null}
+        </div>
+      );
+    }
+
+    const legacyDecorationLayer = selectedDecorationLayer as DecorationLayer | null;
+
+    if (legacyDecorationLayer && !legacyDecorationLayer.decorationKind) {
+      return (
+        <div className="workspace__property-list">
+          <label className="workspace__property">
             <span className="workspace__property-label">装饰形状</span>
             <select
               className="workspace__select"
               onChange={(event) =>
                 updateDecorationShape(
-                  selectedDecorationLayer.id,
+                  legacyDecorationLayer.id,
                   event.target.value as DecorationLayer["shape"]
                 )
               }
-              value={selectedDecorationLayer.shape}
+              value={legacyDecorationLayer.shape}
             >
               {decorationShapeOptions.map((option) => (
                 <option key={option.value} value={option.value}>
@@ -1490,9 +1665,9 @@ export function EditorWorkspace() {
             <span className="workspace__property-label">填充颜色</span>
             <input
               className="workspace__color-input workspace__color-input--wide"
-              onChange={(event) => updateDecorationFill(selectedDecorationLayer.id, event.target.value)}
+              onChange={(event) => updateDecorationFill(legacyDecorationLayer.id, event.target.value)}
               type="color"
-              value={selectedDecorationLayer.fill}
+              value={legacyDecorationLayer.fill}
             />
           </label>
         </div>
@@ -1849,7 +2024,10 @@ export function EditorWorkspace() {
                         type="button"
                       >
                         <div className="workspace__layer-row">
-                          <strong>{layer.name}</strong>
+                          <div>
+                            <strong>{layer.name}</strong>
+                            {renderLayerStatusChips(layer)}
+                          </div>
                         </div>
                       </button>
                       <div className="workspace__layer-actions">

@@ -52,6 +52,9 @@ export const imagePresetFilterIds = [
 ] as const;
 export const enhanceProfileIds = ["auto"] as const;
 export const canvasBackgroundModes = ["grid", "solid", "dots"] as const;
+export const decorationKinds = ["shape", "sticker"] as const;
+export const decorationShapeIds = ["heart", "circle", "rectangle"] as const;
+export const decorationStickerIds = ["star", "ribbon", "bear", "strawberry", "sparkle"] as const;
 export const editorToolIds = [
   "select",
   "crop",
@@ -70,6 +73,9 @@ export type TextTemplateId = (typeof textTemplateIds)[number];
 export type ImagePresetFilterId = (typeof imagePresetFilterIds)[number];
 export type EnhanceProfileId = (typeof enhanceProfileIds)[number];
 export type CanvasBackgroundMode = (typeof canvasBackgroundModes)[number];
+export type DecorationKind = (typeof decorationKinds)[number];
+export type DecorationShapeId = (typeof decorationShapeIds)[number];
+export type DecorationStickerId = (typeof decorationStickerIds)[number];
 export type EditorTool = (typeof editorToolIds)[number];
 
 export type LayerTransform = {
@@ -101,6 +107,7 @@ export type ImageCrop = {
 };
 
 export type ImageFilters = {
+  intensity: number;
   brightness: number;
   contrast: number;
   saturation: number;
@@ -176,7 +183,11 @@ export type TextLayer = LayerBase & {
 
 export type DecorationLayer = LayerBase & {
   type: "decoration";
-  shape: "ribbon" | "badge" | "highlight";
+  decorationKind: DecorationKind;
+  shape: DecorationShapeId;
+  sticker: DecorationStickerId;
+  width: number;
+  height: number;
   fill: string;
 };
 
@@ -341,6 +352,7 @@ export const imageFilterPresets: Array<{
     label: "通透美妆",
     description: "参考主流人像精修风格，提亮肤色与通透感，压低黄感，适合美妆和人物商品图。",
     filters: {
+      intensity: 76,
       brightness: 0.12,
       contrast: 0.1,
       saturation: 0.06,
@@ -356,6 +368,7 @@ export const imageFilterPresets: Array<{
     label: "食欲增强",
     description: "参考常见美食电商图，强化红润与新鲜感，保留食材层次，避免整张图发黄。",
     filters: {
+      intensity: 82,
       brightness: 0.05,
       contrast: 0.16,
       saturation: 0.12,
@@ -371,6 +384,7 @@ export const imageFilterPresets: Array<{
     label: "冷白服饰",
     description: "参考主流服饰详情页色调，偏冷白与利落对比，凸显面料纹理和版型。",
     filters: {
+      intensity: 74,
       brightness: 0.03,
       contrast: 0.18,
       saturation: -0.02,
@@ -386,6 +400,7 @@ export const imageFilterPresets: Array<{
     label: "奶油家居",
     description: "参考家居生活方式图片，整体更柔和中性，保留暖感但不过分偏黄。",
     filters: {
+      intensity: 64,
       brightness: 0.08,
       contrast: 0.04,
       saturation: 0.02,
@@ -401,6 +416,7 @@ export const imageFilterPresets: Array<{
     label: "清新氧气",
     description: "参考日系清透风格，整体更轻盈偏冷，适合护肤、花植和轻生活场景。",
     filters: {
+      intensity: 72,
       brightness: 0.11,
       contrast: 0.04,
       saturation: 0.04,
@@ -416,6 +432,7 @@ export const imageFilterPresets: Array<{
     label: "日落暖调",
     description: "参考社媒常见暖调滤镜，增加氛围感与肤色亲和力，但控制成更克制的金色暖调。",
     filters: {
+      intensity: 78,
       brightness: 0.06,
       contrast: 0.1,
       saturation: 0.08,
@@ -431,6 +448,7 @@ export const imageFilterPresets: Array<{
     label: "海盐冷调",
     description: "参考数码与极简商品图，降低暖黄感，强调干净、冷静和清晰边缘。",
     filters: {
+      intensity: 70,
       brightness: 0.02,
       contrast: 0.14,
       saturation: -0.04,
@@ -446,6 +464,7 @@ export const imageFilterPresets: Array<{
     label: "胶片复古",
     description: "参考常见复古胶片色，降低纯净度与饱和度，保留一点暖灰质感。",
     filters: {
+      intensity: 84,
       brightness: -0.02,
       contrast: 0.14,
       saturation: -0.14,
@@ -461,6 +480,7 @@ export const imageFilterPresets: Array<{
     label: "经典黑白",
     description: "参考经典黑白摄影，强化明暗层次与结构，适合强调轮廓和质感。",
     filters: {
+      intensity: 100,
       brightness: 0.04,
       contrast: 0.22,
       saturation: -1,
@@ -476,6 +496,7 @@ export const imageFilterPresets: Array<{
     label: "高清通透",
     description: "参考平台主图增强风格，提升清晰感和反差，适合大多数商品主图。",
     filters: {
+      intensity: 68,
       brightness: 0.05,
       contrast: 0.18,
       saturation: 0.04,
@@ -499,6 +520,7 @@ export const enhanceProfiles: Array<{
     label: "商品增强",
     description: "自动补足亮度、层次和清晰度，作为大多数商品图的安全增强方案。",
     filters: {
+      intensity: 0,
       brightness: 0.07,
       contrast: 0.14,
       saturation: 0.04,
@@ -580,8 +602,40 @@ export function createDefaultDoodleStyle() {
   };
 }
 
+export function getDecorationDefaultSize(
+  decorationKind: DecorationKind,
+  shape: DecorationShapeId
+) {
+  if (decorationKind === "sticker") {
+    return {
+      width: 160,
+      height: 160
+    };
+  }
+
+  if (shape === "circle") {
+    return {
+      width: 160,
+      height: 160
+    };
+  }
+
+  if (shape === "heart") {
+    return {
+      width: 180,
+      height: 160
+    };
+  }
+
+  return {
+    width: 220,
+    height: 140
+  };
+}
+
 export function createDefaultImageFilters(): ImageFilters {
   return {
+    intensity: 100,
     brightness: 0,
     contrast: 0,
     saturation: 0,
@@ -667,9 +721,9 @@ export function createInitialDocument(): EditorDocument {
     },
     layers: [
       {
+        id: "layer-image-ai-draft",
         name: "AI \u521d\u7a3f",
         type: "image",
-        name: "AI 鍒濈",
         visible: true,
         locked: false,
         opacity: 1,
@@ -686,9 +740,9 @@ export function createInitialDocument(): EditorDocument {
         aiMeta: createDefaultImageAiMeta()
       },
       {
+        id: "layer-text-title",
         name: "\u6807\u9898\u5927\u5b57",
         type: "text",
-        name: "鏍囬澶у瓧",
         visible: true,
         locked: false,
         opacity: 1,
@@ -707,9 +761,9 @@ export function createInitialDocument(): EditorDocument {
         style: createDefaultTextStyle()
       },
       {
+        id: "layer-decoration-price-badge",
         name: "\u4ef7\u683c\u8d34\u7247",
         type: "decoration",
-        name: "浠锋牸璐寸墖",
         visible: true,
         locked: false,
         opacity: 1,
@@ -723,7 +777,11 @@ export function createInitialDocument(): EditorDocument {
           flipX: false,
           flipY: false
         },
-        shape: "badge",
+        decorationKind: "shape",
+        shape: "heart",
+        sticker: "sparkle",
+        width: 180,
+        height: 160,
         fill: "#cf5b2d"
       }
     ],

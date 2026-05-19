@@ -2,6 +2,7 @@ import {
   Canvas,
   FabricImage,
   Gradient,
+  Path,
   Polyline,
   Rect,
   Shadow,
@@ -18,6 +19,7 @@ import type {
   ImageLayer,
   TextLayer
 } from "../model/document";
+import { renderProcessedImageSource } from "./lutEngine";
 
 type SeedCanvasOptions = {
   showSafeArea?: boolean;
@@ -98,32 +100,8 @@ function buildSharpenMatrix(intensity: number) {
   return [0, -intensity, 0, -intensity, 1 + intensity * 4, -intensity, 0, -intensity, 0];
 }
 
-function buildTemperatureMatrix(temperature: number) {
-  const redShift = Math.round(temperature * 24);
-  const greenShift = Math.round(temperature * 6);
-  const blueShift = Math.round(temperature * -18);
-
-  return [1, 0, 0, 0, redShift, 0, 1, 0, 0, greenShift, 0, 0, 1, 0, blueShift, 0, 0, 0, 1, 0];
-}
-
 function applyImageFilters(image: FabricImage, layer: ImageLayer) {
   const nextFilters = [];
-
-  if (layer.filters.brightness !== 0) {
-    nextFilters.push(new filters.Brightness({ brightness: layer.filters.brightness }));
-  }
-
-  if (layer.filters.contrast !== 0) {
-    nextFilters.push(new filters.Contrast({ contrast: layer.filters.contrast }));
-  }
-
-  if (layer.filters.saturation !== 0) {
-    nextFilters.push(new filters.Saturation({ saturation: layer.filters.saturation }));
-  }
-
-  if (layer.filters.vibrance !== 0) {
-    nextFilters.push(new filters.Vibrance({ vibrance: layer.filters.vibrance }));
-  }
 
   if (layer.filters.blur !== 0) {
     nextFilters.push(new filters.Blur({ blur: layer.filters.blur }));
@@ -131,14 +109,6 @@ function applyImageFilters(image: FabricImage, layer: ImageLayer) {
 
   if (layer.filters.sharpen !== 0) {
     nextFilters.push(new filters.Convolute({ matrix: buildSharpenMatrix(layer.filters.sharpen) }));
-  }
-
-  if (layer.filters.temperature !== 0) {
-    nextFilters.push(new filters.ColorMatrix({ matrix: buildTemperatureMatrix(layer.filters.temperature) }));
-  }
-
-  if (layer.filters.hue !== 0) {
-    nextFilters.push(new filters.HueRotation({ rotation: layer.filters.hue }));
   }
 
   image.filters = nextFilters;
@@ -153,7 +123,8 @@ async function createImageObject(
     return createImagePlaceholder(layer);
   }
 
-  const image = await FabricImage.fromURL(layer.source);
+  const processedSource = await renderProcessedImageSource(layer);
+  const image = await FabricImage.fromURL(processedSource);
   const previewingCurrentLayer = cropPreview && cropPreview.layerId === layer.id;
 
   if (previewingCurrentLayer) {
@@ -206,15 +177,49 @@ function createTextObject(layer: TextLayer) {
 }
 
 function createDecorationObject(layer: DecorationLayer) {
-  const width = layer.shape === "highlight" ? 300 : 240;
-  const height = layer.shape === "ribbon" ? 86 : 120;
-  const rx = layer.shape === "highlight" ? 30 : 22;
+  if (layer.decorationKind === "sticker") {
+    const stickerMap: Record<DecorationLayer["sticker"], string> = {
+      star: "🌟",
+      ribbon: "🎀",
+      bear: "🐻",
+      strawberry: "🍓",
+      sparkle: "✨"
+    };
+
+    return new Textbox(stickerMap[layer.sticker], {
+      width: layer.width,
+      height: layer.height,
+      fontSize: Math.round(Math.min(layer.width, layer.height) * 0.78),
+      fontFamily: "\"Segoe UI Emoji\", \"Apple Color Emoji\", sans-serif",
+      textAlign: "center",
+      fill: "#1c2520"
+    });
+  }
+
+  if (layer.shape === "heart") {
+    const heart = new Path(
+      "M 50 90 C 20 70 0 45 0 20 C 0 -8 22 -24 46 -24 C 64 -24 80 -14 90 2 C 100 -14 116 -24 134 -24 C 158 -24 180 -8 180 20 C 180 45 160 70 130 90 L 90 126 Z",
+      {
+        fill: layer.fill
+      }
+    );
+
+    const heartWidth = heart.width ?? 180;
+    const heartHeight = heart.height ?? 150;
+
+    heart.set({
+      scaleX: layer.width / heartWidth,
+      scaleY: layer.height / heartHeight
+    });
+
+    return heart;
+  }
 
   return new Rect({
-    width,
-    height,
-    rx,
-    ry: rx,
+    width: layer.width,
+    height: layer.height,
+    rx: layer.shape === "circle" ? layer.width / 2 : 24,
+    ry: layer.shape === "circle" ? layer.height / 2 : 24,
     fill: layer.fill
   });
 }
