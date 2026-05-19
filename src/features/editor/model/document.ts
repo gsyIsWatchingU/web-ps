@@ -4,35 +4,35 @@ export const canvasPresets = [
     label: "1:1",
     width: 1080,
     height: 1080,
-    scene: "\u5546\u54c1\u65b9\u56fe"
+    scene: "商品方图"
   },
   {
     id: "3:4",
     label: "3:4",
     width: 900,
     height: 1200,
-    scene: "\u5546\u54c1\u7ad6\u7248"
+    scene: "商品竖版"
   },
   {
     id: "4:5",
     label: "4:5",
     width: 1080,
     height: 1350,
-    scene: "\u6295\u653e\u4e3b\u56fe"
+    scene: "投放主图"
   },
   {
     id: "9:16",
     label: "9:16",
     width: 1080,
     height: 1920,
-    scene: "\u77ed\u89c6\u9891\u5c01\u9762"
+    scene: "短视频封面"
   },
   {
     id: "custom",
-    label: "\u81ea\u5b9a\u4e49",
+    label: "自定义",
     width: 1200,
     height: 1500,
-    scene: "\u81ea\u5b9a\u4e49\u753b\u5e03"
+    scene: "自定义画布"
   }
 ] as const;
 
@@ -613,8 +613,8 @@ export function createDefaultImageMask(): ImageMask {
 
 export function createDefaultImageAiMeta(): ImageAiMeta {
   return {
-    prompt: "\u53bb\u6389\u7455\u75b5\u548c\u5e72\u6270\u5143\u7d20\uff0c\u4fdd\u6301\u5546\u54c1\u4e3b\u4f53\u3001\u5149\u5f71\u548c\u753b\u9762\u98ce\u683c\u81ea\u7136\u4e00\u81f4\u3002",
-    expandPrompt: "\u5728\u5ef6\u5c55\u753b\u9762\u7684\u540c\u65f6\u4fdd\u6301\u4e3b\u4f53\u4f4d\u7f6e\u3001\u80cc\u666f\u6c1b\u56f4\u548c\u6574\u4f53\u5149\u7ebf\u4e00\u81f4\u3002",
+    prompt: "去掉瑕疵和干扰元素，保持商品主体、光影和画面风格自然一致。",
+    expandPrompt: "在延展画面的同时保持主体位置、背景氛围和整体光线一致。",
     lastAiAction: null,
     lastAiRequestedAt: null,
     lastAiSucceededAt: null,
@@ -648,7 +648,7 @@ export function createInitialDocument(): EditorDocument {
 
   return {
     id: "doc-editor-mvp",
-    name: "AIGC \u4fee\u56fe\u5de5\u4f5c\u53f0",
+    name: "AIGC 修图工作台",
     canvas: {
       presetId: preset.id,
       width: preset.width,
@@ -667,9 +667,8 @@ export function createInitialDocument(): EditorDocument {
     },
     layers: [
       {
-        name: "AI \u521d\u7a3f",
+        name: "AI 初稿",
         type: "image",
-        name: "AI 鍒濈",
         visible: true,
         locked: false,
         opacity: 1,
@@ -686,9 +685,8 @@ export function createInitialDocument(): EditorDocument {
         aiMeta: createDefaultImageAiMeta()
       },
       {
-        name: "\u6807\u9898\u5927\u5b57",
+        name: "标题大字",
         type: "text",
-        name: "鏍囬澶у瓧",
         visible: true,
         locked: false,
         opacity: 1,
@@ -702,14 +700,13 @@ export function createInitialDocument(): EditorDocument {
           flipX: false,
           flipY: false
         },
-        content: "\u7206\u6b3e\u4e3b\u6807\u9898",
+        content: "爆款主标题",
         textTemplateId: "title",
         style: createDefaultTextStyle()
       },
       {
-        name: "\u4ef7\u683c\u8d34\u7247",
+        name: "价格贴片",
         type: "decoration",
-        name: "浠锋牸璐寸墖",
         visible: true,
         locked: false,
         opacity: 1,
