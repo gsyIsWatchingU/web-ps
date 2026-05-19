@@ -90,6 +90,22 @@ function isDirectManipulationTool(activeTool: EditorTool) {
   return ["brush", "crop", "doodle"].includes(activeTool);
 }
 
+function resolveCanvasCursor(activeTool: EditorTool, isPanning: boolean) {
+  if (isPanning) {
+    return "grabbing";
+  }
+
+  if (isDirectManipulationTool(activeTool)) {
+    return "crosshair";
+  }
+
+  if (activeTool === "select") {
+    return "grab";
+  }
+
+  return "default";
+}
+
 function syncCanvasObjectInteractivity(
   runtime: Canvas,
   document: EditorDocument,
@@ -123,11 +139,17 @@ function syncCanvasInteractionMode(
   isPanning = false
 ) {
   const directManipulation = isDirectManipulationTool(activeTool);
+  const cursor = resolveCanvasCursor(activeTool, isPanning);
 
   runtime.selection = !directManipulation && !isPanning;
   syncCanvasObjectInteractivity(runtime, document, activeTool, isPanning);
-  runtime.defaultCursor = directManipulation ? "crosshair" : isPanning ? "grabbing" : "default";
-  runtime.hoverCursor = runtime.defaultCursor;
+  runtime.defaultCursor = cursor;
+  runtime.hoverCursor = cursor;
+  runtime.moveCursor = cursor;
+
+  if (runtime.upperCanvasEl) {
+    runtime.upperCanvasEl.style.cursor = cursor;
+  }
 }
 
 function getCanvasSurfaceStyle(document: EditorDocument): CSSProperties {

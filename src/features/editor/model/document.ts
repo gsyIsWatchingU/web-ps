@@ -59,9 +59,7 @@ export const editorToolIds = [
   "select",
   "crop",
   "doodle",
-  "brush",
-  "eraser",
-  "repair",
+  "ai3d",
   "text",
   "filter",
   "shape"
@@ -118,37 +116,29 @@ export type ImageFilters = {
   hue: number;
 };
 
-export type MaskPoint = {
-  x: number;
-  y: number;
-};
-
 export type DoodlePoint = {
   x: number;
   y: number;
 };
 
-export type MaskStroke = {
-  id: string;
-  mode: "paint" | "erase";
-  size: number;
-  points: MaskPoint[];
-};
+export type Model3dTaskStatus = "idle" | "pending" | "running" | "succeeded" | "failed";
 
-export type ImageMask = {
-  showPreview: boolean;
-  brushSize: number;
-  strokes: MaskStroke[];
-  activeStrokeId: string | null;
+export type Model3dTaskMeta = {
+  taskId: string | null;
+  status: Model3dTaskStatus;
+  downloadUrl: string | null;
+  fileName: string | null;
+  providerModel: string | null;
 };
 
 export type ImageAiMeta = {
   prompt: string;
   expandPrompt: string;
-  lastAiAction: "inpaint" | "outpaint" | null;
+  lastAiAction: "seed3d" | "outpaint" | null;
   lastAiRequestedAt: string | null;
   lastAiSucceededAt: string | null;
   lastAiError: string | null;
+  model3dTask: Model3dTaskMeta;
 };
 
 export type ImageLayer = LayerBase & {
@@ -160,7 +150,6 @@ export type ImageLayer = LayerBase & {
   presetFilterId: ImagePresetFilterId | null;
   enhanceProfileId: EnhanceProfileId | null;
   filters: ImageFilters;
-  mask: ImageMask;
   aiMeta: ImageAiMeta;
 };
 
@@ -556,10 +545,6 @@ export function createLayerId(prefix: LayerType) {
   return `layer-${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-export function createStrokeId() {
-  return `stroke-${Math.random().toString(36).slice(2, 10)}`;
-}
-
 export function normalizeLayerOrder<T extends EditorLayer>(layers: T[]) {
   return [...layers]
     .sort((left, right) => left.zIndex - right.zIndex)
@@ -656,23 +641,22 @@ export function createImageCrop(width: number, height: number): ImageCrop {
   };
 }
 
-export function createDefaultImageMask(): ImageMask {
-  return {
-    showPreview: true,
-    brushSize: 36,
-    strokes: [],
-    activeStrokeId: null
-  };
-}
-
 export function createDefaultImageAiMeta(): ImageAiMeta {
   return {
-    prompt: "\u53bb\u6389\u7455\u75b5\u548c\u5e72\u6270\u5143\u7d20\uff0c\u4fdd\u6301\u5546\u54c1\u4e3b\u4f53\u3001\u5149\u5f71\u548c\u753b\u9762\u98ce\u683c\u81ea\u7136\u4e00\u81f4\u3002",
+    prompt:
+      "\u751f\u6210\u5e72\u51c0\u65e0\u5197\u4f59\u566a\u70b9\u7684\u767d\u6a21\u8d44\u4ea7\uff0c\u4fdd\u7559\u76ee\u6807\u7269\u4f53\u7684\u51e0\u4f55\u7ed3\u6784\u7ec6\u8282\uff0c\u8fb9\u7f18\u6e05\u6670\u9510\u5229\uff0c\u7a7a\u95f4\u900f\u89c6\u548c\u7ed3\u6784\u5408\u7406\uff0c\u4fbf\u4e8e\u540e\u7eed 3D \u6253\u5370\u3002",
     expandPrompt: "\u5728\u5ef6\u5c55\u753b\u9762\u7684\u540c\u65f6\u4fdd\u6301\u4e3b\u4f53\u4f4d\u7f6e\u3001\u80cc\u666f\u6c1b\u56f4\u548c\u6574\u4f53\u5149\u7ebf\u4e00\u81f4\u3002",
     lastAiAction: null,
     lastAiRequestedAt: null,
     lastAiSucceededAt: null,
-    lastAiError: null
+    lastAiError: null,
+    model3dTask: {
+      taskId: null,
+      status: "idle",
+      downloadUrl: null,
+      fileName: null,
+      providerModel: null
+    }
   };
 }
 
@@ -736,7 +720,6 @@ export function createInitialDocument(): EditorDocument {
         presetFilterId: null,
         enhanceProfileId: null,
         filters: createDefaultImageFilters(),
-        mask: createDefaultImageMask(),
         aiMeta: createDefaultImageAiMeta()
       },
       {

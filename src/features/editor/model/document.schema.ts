@@ -101,33 +101,35 @@ const imageLayerSchema = layerBaseSchema.extend({
     temperature: z.number(),
     hue: z.number().default(0)
   }),
-  mask: z.object({
-    showPreview: z.boolean(),
-    brushSize: z.number().positive(),
-    activeStrokeId: z.string().nullable(),
-    strokes: z.array(
-      z.object({
-        id: z.string(),
-        mode: z.enum(["paint", "erase"]),
-        size: z.number().positive(),
-        points: z.array(
-          z.object({
-            x: z.number().min(0).max(1),
-            y: z.number().min(0).max(1)
-          })
-        )
-      })
-    )
-  }),
   aiMeta: z.object({
     prompt: z.string(),
     expandPrompt: z.string(),
-    lastAiAction: z.enum(["inpaint", "outpaint"]).nullable(),
+    lastAiAction: z.enum(["seed3d", "outpaint"]).nullable(),
     lastAiRequestedAt: z.string().nullable(),
     lastAiSucceededAt: z.string().nullable(),
-    lastAiError: z.string().nullable()
+    lastAiError: z.string().nullable(),
+    model3dTask: z
+      .object({
+        taskId: z.string().nullable(),
+        status: z.enum(["idle", "pending", "running", "succeeded", "failed"]),
+        downloadUrl: z.string().nullable(),
+        fileName: z.string().nullable(),
+        providerModel: z.string().nullable()
+      })
+      .default({
+        taskId: null,
+        status: "idle",
+        downloadUrl: null,
+        fileName: null,
+        providerModel: null
+      })
   })
-});
+})
+  .passthrough()
+  .transform((layer) => {
+    const { mask: _legacyMask, ...rest } = layer as typeof layer & { mask?: unknown };
+    return rest;
+  });
 
 const textLayerSchema = layerBaseSchema.extend({
   type: z.literal("text"),

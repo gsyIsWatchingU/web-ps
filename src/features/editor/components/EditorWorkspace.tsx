@@ -139,6 +139,26 @@ function formatTime(timestamp: string | null) {
   });
 }
 
+function isDashScopeAccountIssueMessage(message: string | null) {
+  if (!message) {
+    return false;
+  }
+
+  const normalized = message.toLowerCase();
+
+  return [
+    "access denied",
+    "good standing",
+    "overdue payment",
+    "insufficient balance",
+    "quota",
+    "forbidden",
+    "账号状态异常",
+    "余额不足",
+    "无权限"
+  ].some((keyword) => normalized.includes(keyword));
+}
+
 function clampDimension(value: number) {
   return Math.min(8000, Math.max(1, Math.round(value)));
 }
@@ -848,6 +868,45 @@ export function EditorWorkspace() {
       );
     }
 
+    if (activeTool === "doodle") {
+      return (
+        <div className="workspace__property-list">
+          <label className="workspace__property">
+            <span className="workspace__property-label">画笔颜色</span>
+            <input
+              className="workspace__color-input workspace__color-input--wide"
+              onChange={(event) =>
+                setDoodleStyle((current) => ({
+                  ...current,
+                  stroke: event.target.value
+                }))
+              }
+              type="color"
+              value={doodleStyle.stroke}
+            />
+          </label>
+          <label className="workspace__property">
+            <span className="workspace__property-label">画笔粗细</span>
+            <input
+              className="workspace__range"
+              max={64}
+              min={2}
+              onChange={(event) =>
+                setDoodleStyle((current) => ({
+                  ...current,
+                  strokeWidth: Number(event.target.value)
+                }))
+              }
+              step={1}
+              type="range"
+              value={doodleStyle.strokeWidth}
+            />
+            <div className="workspace__property-value">{doodleStyle.strokeWidth}px</div>
+          </label>
+        </div>
+      );
+    }
+
     if (selectedImageLayer) {
       const filterAdjustmentControls = (
         [
@@ -940,6 +999,8 @@ export function EditorWorkspace() {
 
       const showMaskModeControls = activeTool === "brush" || activeTool === "eraser" || activeTool === "repair";
       const showApplyAiRepairAction = activeTool === "brush" || activeTool === "eraser";
+      const lastAiError = selectedImageLayer.aiMeta.lastAiError;
+      const hasAiServiceAccountIssue = isDashScopeAccountIssueMessage(lastAiError);
 
       const maskControls = (
         <>
@@ -977,6 +1038,44 @@ export function EditorWorkspace() {
               </button>
             </div>
           ) : null}
+        </>
+      );
+
+      const aiRepairStatus = (
+        <>
+          <p className="workspace__footer-note">
+            最近一次 AI 修复：{selectedImageLayer.aiMeta.lastAiAction ?? "暂无"} · {formatTime(selectedImageLayer.aiMeta.lastAiSucceededAt)}
+          </p>
+          {lastAiError ? (
+            <p className="workspace__warning">{lastAiError}</p>
+          ) : null}
+        </>
+      );
+
+      const maskControlsWithoutApply = (
+        <>
+          {showMaskModeControls ? (
+            <div className="workspace__property workspace__property--inner">
+              <span className="workspace__property-label">圈选模式</span>
+              <div className="workspace__inline-actions workspace__inline-actions--segmented">
+                <button
+                  className={`workspace__action-button ${maskSelectionMode === "rectangle" ? "is-active" : ""}`}
+                  onClick={() => setMaskSelectionMode("rectangle")}
+                  type="button"
+                >
+                  矩形圈选
+                </button>
+                <button
+                  className={`workspace__action-button ${maskSelectionMode === "freeform" ? "is-active" : ""}`}
+                  onClick={() => setMaskSelectionMode("freeform")}
+                  type="button"
+                >
+                  自由圈选
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {maskControlsBase}
         </>
       );
 
@@ -1086,7 +1185,38 @@ export function EditorWorkspace() {
               <div className="workspace__property-label">
                 {activeTool === "brush" ? "圈选修复" : "擦除圈选"}
               </div>
-              {maskControls}
+              <p className="workspace__footer-note">先圈选需要修复的区域，再填写提示词并执行局部修复。</p>
+              {!aiConfigured ? (
+                <p className="workspace__warning">
+                  AI 配置未完成，请先在 `src/features/editor/runtime/aiConfig.ts` 中填写 DashScope 的 baseURL、apiKey 和 model。
+                </p>
+              ) : null}
+              {aiConfigured && hasAiServiceAccountIssue ? (
+                <p className="workspace__warning">
+                  AI 配置已加载，但当前 DashScope 服务账号不可用。请检查账户余额、服务权限和 API Key。
+                </p>
+              ) : null}
+              <label className="workspace__property workspace__property--inner">
+                <span className="workspace__property-label">修复提示词</span>
+                <textarea
+                  className="workspace__text-area"
+                  onChange={(event) => updateAiPrompt(selectedImageLayer.id, event.target.value)}
+                  rows={3}
+                  value={selectedImageLayer.aiMeta.prompt}
+                />
+              </label>
+              {maskControlsWithoutApply}
+              <div className="workspace__inline-actions">
+                <button
+                  className="workspace__action-button"
+                  disabled={aiBusy !== null || !aiConfigured}
+                  onClick={() => void handleAiRepair()}
+                  type="button"
+                >
+                  {aiBusy === "repair" ? "修复处理中..." : "执行局部修复"}
+                </button>
+              </div>
+              {aiRepairStatus}
             </div>
           </div>
         );
@@ -1102,7 +1232,12 @@ export function EditorWorkspace() {
               </p>
               {!aiConfigured ? (
                 <p className="workspace__warning">
-                  请先在 `src/features/editor/runtime/aiConfig.ts` 中配置 API Key 和 Base URL。
+                  AI 配置未完成，请先在 `src/features/editor/runtime/aiConfig.ts` 中填写 DashScope 的 baseURL、apiKey 和 model。
+                </p>
+              ) : null}
+              {aiConfigured && hasAiServiceAccountIssue ? (
+                <p className="workspace__warning">
+                  AI 配置已加载，但当前 DashScope 服务账号不可用。请检查账户余额、服务权限和 API Key。
                 </p>
               ) : null}
               <label className="workspace__property workspace__property--inner">
@@ -1163,46 +1298,46 @@ export function EditorWorkspace() {
         );
       }
 
-      if (activeTool === "select" || activeTool === "doodle" || activeTool === "text" || activeTool === "shape") {
-        if (activeTool === "doodle") {
-          return (
-            <div className="workspace__property-list">
-              <label className="workspace__property">
-                <span className="workspace__property-label">画笔颜色</span>
-                <input
-                  className="workspace__color-input workspace__color-input--wide"
-                  onChange={(event) =>
-                    setDoodleStyle((current) => ({
-                      ...current,
-                      stroke: event.target.value
-                    }))
-                  }
-                  type="color"
-                  value={doodleStyle.stroke}
-                />
-              </label>
-              <label className="workspace__property">
-                <span className="workspace__property-label">画笔粗细</span>
-                <input
-                  className="workspace__range"
-                  max={64}
-                  min={2}
-                  onChange={(event) =>
-                    setDoodleStyle((current) => ({
-                      ...current,
-                      strokeWidth: Number(event.target.value)
-                    }))
-                  }
-                  step={1}
-                  type="range"
-                  value={doodleStyle.strokeWidth}
-                />
-                <div className="workspace__property-value">{doodleStyle.strokeWidth}px</div>
-              </label>
-            </div>
-          );
-        }
+      if (activeToolItem?.id === "doodle") {
+        return (
+          <div className="workspace__property-list">
+            <label className="workspace__property">
+              <span className="workspace__property-label">画笔颜色</span>
+              <input
+                className="workspace__color-input workspace__color-input--wide"
+                onChange={(event) =>
+                  setDoodleStyle((current) => ({
+                    ...current,
+                    stroke: event.target.value
+                  }))
+                }
+                type="color"
+                value={doodleStyle.stroke}
+              />
+            </label>
+            <label className="workspace__property">
+              <span className="workspace__property-label">画笔粗细</span>
+              <input
+                className="workspace__range"
+                max={64}
+                min={2}
+                onChange={(event) =>
+                  setDoodleStyle((current) => ({
+                    ...current,
+                    strokeWidth: Number(event.target.value)
+                  }))
+                }
+                step={1}
+                type="range"
+                value={doodleStyle.strokeWidth}
+              />
+              <div className="workspace__property-value">{doodleStyle.strokeWidth}px</div>
+            </label>
+          </div>
+        );
+      }
 
+      if (activeTool === "select" || activeTool === "text" || activeTool === "shape") {
         return (
           <div className="workspace__property-list">
             <div className="workspace__property workspace__property--highlight">

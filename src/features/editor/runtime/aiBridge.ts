@@ -68,10 +68,10 @@ async function blobToDataUrl(blob: Blob) {
         return;
       }
 
-      reject(new Error("AI 返回图片读取失败。"));
+      reject(new Error("AI 返回了无法读取的图片结果，请稍后重试。"));
     };
 
-    reader.onerror = () => reject(new Error("AI 返回图片读取失败。"));
+    reader.onerror = () => reject(new Error("AI 返回了无法读取的图片结果，请稍后重试。"));
     reader.readAsDataURL(blob);
   });
 }
@@ -79,7 +79,7 @@ async function blobToDataUrl(blob: Blob) {
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
   return new Promise<T>((resolve, reject) => {
     const timer = window.setTimeout(() => {
-      reject(new Error("AI 处理超时，请稍后重试。"));
+      reject(new Error("AI 修复处理超时，请稍后重试。"));
     }, timeoutMs);
 
     promise
@@ -100,11 +100,46 @@ function wait(ms: number) {
   });
 }
 
+function buildDashScopeErrorMessage(payloadMessage: string | undefined, fallbackMessage: string) {
+  const rawMessage = payloadMessage?.trim();
+  const normalized = rawMessage?.toLowerCase() ?? "";
+
+  const providerAccountIssue =
+    normalized.includes("access denied") ||
+    normalized.includes("good standing") ||
+    normalized.includes("overdue payment") ||
+    normalized.includes("insufficient balance") ||
+    normalized.includes("quota") ||
+    normalized.includes("forbidden");
+
+  if (providerAccountIssue) {
+    return `AI 修复当前不可用：阿里云模型服务账号状态异常、余额不足或无权限，请检查 DashScope 账户余额、服务权限和 API Key。原始错误：${rawMessage}`;
+  }
+
+  if (normalized.includes("unauthorized") || normalized.includes("invalid api key") || normalized.includes("api key")) {
+    return `AI 修复当前不可用：DashScope API Key 无效或权限不足，请检查 src/features/editor/runtime/aiConfig.ts 中的配置。原始错误：${rawMessage}`;
+  }
+
+  if (normalized.includes("timeout")) {
+    return "AI 修复处理超时，请稍后重试。";
+  }
+
+  if (normalized.includes("network") || normalized.includes("failed to fetch")) {
+    return "AI 修复请求失败：网络连接异常，暂时无法访问模型服务。";
+  }
+
+  if (rawMessage) {
+    return `${fallbackMessage} 原始错误：${rawMessage}`;
+  }
+
+  return fallbackMessage;
+}
+
 async function fetchResultAsDataUrl(url: string) {
   const response = await fetch(url);
 
   if (!response.ok) {
-    throw new Error(`AI 结果图片下载失败（${response.status}）。`);
+    throw new Error(`AI 修复结果图片下载失败（${response.status}）。`);
   }
 
   return blobToDataUrl(await response.blob());
@@ -135,7 +170,12 @@ async function createDashScopeTask(input: AiEditInput) {
   const payload = (await response.json()) as DashScopeTaskCreatePayload;
 
   if (!response.ok) {
-    throw new Error(payload.message || payload.code || `AI 修复任务创建失败（${response.status}）。`);
+    throw new Error(
+      buildDashScopeErrorMessage(
+        payload.message || payload.code,
+        `AI 修复任务创建失败（${response.status}）。`
+      )
+    );
   }
 
   const taskId = payload.output?.task_id;
@@ -160,7 +200,12 @@ async function pollDashScopeTask(taskId: string) {
     const payload = (await response.json()) as DashScopeTaskResultPayload;
 
     if (!response.ok) {
-      throw new Error(payload.message || payload.code || `AI 修复任务查询失败（${response.status}）。`);
+      throw new Error(
+        buildDashScopeErrorMessage(
+          payload.message || payload.code || payload.output?.message || payload.output?.code,
+          `AI 修复任务查询失败（${response.status}）。`
+        )
+      );
     }
 
     const status = payload.output?.task_status;
@@ -176,13 +221,18 @@ async function pollDashScopeTask(taskId: string) {
     }
 
     if (status === "FAILED" || status === "CANCELED" || status === "UNKNOWN") {
-      throw new Error(payload.output?.message || payload.output?.code || `AI 修复失败，任务状态：${status}。`);
+      throw new Error(
+        buildDashScopeErrorMessage(
+          payload.output?.message || payload.output?.code,
+          `AI 修复失败，任务状态：${status}。`
+        )
+      );
     }
 
     await wait(1500);
   }
 
-  throw new Error("AI 修复超时，请稍后重试。");
+  throw new Error("AI 修复处理超时，请稍后重试。");
 }
 
 async function callDashScopeMaskedEdit(input: AiEditInput): Promise<AiBridgeResult> {
@@ -190,7 +240,7 @@ async function callDashScopeMaskedEdit(input: AiEditInput): Promise<AiBridgeResu
     return {
       success: false,
       imageDataUrl: null,
-      errorMessage: "请先在 aiConfig.ts 中配置 DashScope 的 baseURL、apiKey 和 model。"
+      errorMessage: "AI 配置不完整，请先在 src/features/editor/runtime/aiConfig.ts 中填写 DashScope 的 baseURL、apiKey 和 model。"
     };
   }
 
@@ -207,7 +257,7 @@ async function callDashScopeMaskedEdit(input: AiEditInput): Promise<AiBridgeResu
     return {
       success: false,
       imageDataUrl: null,
-      errorMessage: error instanceof Error ? error.message : "AI 修复失败。"
+      errorMessage: error instanceof Error ? error.message : "AI 修复失败，请稍后重试。"
     };
   }
 }
