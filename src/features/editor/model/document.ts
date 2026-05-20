@@ -150,6 +150,7 @@ export type ImageLayer = LayerBase & {
   presetFilterId: ImagePresetFilterId | null;
   enhanceProfileId: EnhanceProfileId | null;
   filters: ImageFilters;
+  mask: ImageMask;
   aiMeta: ImageAiMeta;
 };
 
@@ -545,6 +546,10 @@ export function createLayerId(prefix: LayerType) {
   return `layer-${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+export function createStrokeId() {
+  return `stroke-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export function normalizeLayerOrder<T extends EditorLayer>(layers: T[]) {
   return [...layers]
     .sort((left, right) => left.zIndex - right.zIndex)
@@ -659,6 +664,21 @@ export function createDefaultImageAiMeta(): ImageAiMeta {
   };
 }
 
+export type MaskPoint = {
+  x: number;
+  y: number;
+};
+
+export type ImageMask = {
+  points: MaskPoint[];
+};
+
+export function createDefaultImageMask(): ImageMask {
+  return {
+    points: []
+  };
+}
+
 export function createDefaultExportConfig(
   canvas: Pick<CanvasModel, "width" | "height"> = getCanvasPreset("4:5")
 ): ExportConfig {
@@ -704,6 +724,7 @@ export function createInitialDocument(): EditorDocument {
     },
     layers: [
       {
+        id: createLayerId("image"),
         name: "AI 初稿",
         type: "image",
         visible: true,
@@ -718,9 +739,11 @@ export function createInitialDocument(): EditorDocument {
         presetFilterId: null,
         enhanceProfileId: null,
         filters: createDefaultImageFilters(),
+        mask: createDefaultImageMask(),
         aiMeta: createDefaultImageAiMeta()
       },
       {
+        id: createLayerId("text"),
         name: "标题大字",
         type: "text",
         visible: true,
@@ -741,6 +764,7 @@ export function createInitialDocument(): EditorDocument {
         style: createDefaultTextStyle()
       },
       {
+        id: createLayerId("decoration"),
         name: "价格贴片",
         type: "decoration",
         visible: true,

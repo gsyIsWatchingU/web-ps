@@ -101,6 +101,16 @@ const imageLayerSchema = layerBaseSchema.extend({
     temperature: z.number(),
     hue: z.number().default(0)
   }),
+  mask: z
+    .object({
+      points: z.array(
+        z.object({
+          x: z.number(),
+          y: z.number()
+        })
+      )
+    })
+    .default({ points: [] }),
   aiMeta: z.object({
     prompt: z.string(),
     expandPrompt: z.string(),
@@ -125,11 +135,7 @@ const imageLayerSchema = layerBaseSchema.extend({
       })
   })
 })
-  .passthrough()
-  .transform((layer) => {
-    const { mask: _legacyMask, ...rest } = layer as typeof layer & { mask?: unknown };
-    return rest;
-  });
+  .passthrough();
 
 const textLayerSchema = layerBaseSchema.extend({
   type: z.literal("text"),
