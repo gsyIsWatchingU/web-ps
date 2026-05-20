@@ -114,7 +114,7 @@ const imageLayerSchema = layerBaseSchema.extend({
   aiMeta: z.object({
     prompt: z.string(),
     expandPrompt: z.string(),
-    lastAiAction: z.enum(["seed3d", "outpaint"]).nullable(),
+    lastAiAction: z.enum(["seed3d", "outpaint", "inpaint"]).nullable(),
     lastAiRequestedAt: z.string().nullable(),
     lastAiSucceededAt: z.string().nullable(),
     lastAiError: z.string().nullable(),

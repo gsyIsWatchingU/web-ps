@@ -62,7 +62,10 @@ export const editorToolIds = [
   "ai3d",
   "text",
   "filter",
-  "shape"
+  "shape",
+  "brush",
+  "eraser",
+  "repair"
 ] as const;
 
 export type CanvasPresetId = (typeof canvasPresets)[number]["id"];
@@ -134,7 +137,7 @@ export type Model3dTaskMeta = {
 export type ImageAiMeta = {
   prompt: string;
   expandPrompt: string;
-  lastAiAction: "seed3d" | "outpaint" | null;
+  lastAiAction: "seed3d" | "outpaint" | "inpaint" | null;
   lastAiRequestedAt: string | null;
   lastAiSucceededAt: string | null;
   lastAiError: string | null;
@@ -669,13 +672,28 @@ export type MaskPoint = {
   y: number;
 };
 
+export type MaskStroke = {
+  id: string;
+  mode: "paint" | "erase";
+  size: number;
+  points: MaskPoint[];
+};
+
 export type ImageMask = {
   points: MaskPoint[];
+  brushSize: number;
+  showPreview: boolean;
+  strokes: MaskStroke[];
+  activeStrokeId: string | null;
 };
 
 export function createDefaultImageMask(): ImageMask {
   return {
-    points: []
+    points: [],
+    brushSize: 50,
+    showPreview: true,
+    strokes: [],
+    activeStrokeId: null
   };
 }
 

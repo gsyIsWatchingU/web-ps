@@ -6,5 +6,5 @@ export const aiConfig = {
 };
 
 export function hasAiConfig(): boolean {
-  return aiConfig.baseURL && aiConfig.apiKey && aiConfig.model;
+  return Boolean(aiConfig.baseURL && aiConfig.apiKey && aiConfig.model);
 }

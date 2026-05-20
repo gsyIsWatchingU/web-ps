@@ -363,6 +363,17 @@ const toolItemsAntd = [
     )
   },
   {
+    id: "ai3d",
+    label: "3D",
+    hint: "生成3D模型",
+    icon: (
+      <IconBase>
+        <circle cx="12" cy="12" r="7" stroke="currentColor" strokeWidth="1.8" />
+        <path d="M12 5a7 7 0 0 1 0 14V5Z" fill="currentColor" opacity="0.22" />
+      </IconBase>
+    )
+  },
+  {
     id: "shape",
     label: "装饰",
     hint: "添加徽章、贴片和强调色块",
