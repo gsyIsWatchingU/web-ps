@@ -8,9 +8,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api/ai": {
-        target: "https://dashscope.aliyuncs.com",
+        target: "https://ark.cn-beijing.volces.com",
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/ai/, "/api/v1")
+        rewrite: (path) => path.replace(/^\/api\/ai/, "/api/v3")
       }
     }
   }

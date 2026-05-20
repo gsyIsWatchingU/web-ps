@@ -1,97 +1,66 @@
 import { aiConfig, hasAiConfig } from "./aiConfig";
 
-type AiBridgeResult = {
-  success: boolean;
-  imageDataUrl: string | null;
+export type Seed3DTaskResult = {
+  taskId: string | null;
+  status: "pending" | "running" | "succeeded" | "failed";
+  downloadUrl: string | null;
+  fileName: string | null;
+  providerModel: string | null;
   errorMessage: string | null;
 };
 
-type AiEditInput = {
-  sourceDataUrl: string;
-  maskDataUrl: string;
-  prompt: string;
-  size: `${number}x${number}`;
-};
-
-type DashScopeTaskCreatePayload = {
-  output?: {
-    task_id?: string;
-    task_status?: string;
-  };
+type Seed3DCreateResponse = {
+  request_id?: string;
+  task_id?: string;
+  id?: string;
+  status?: string;
   code?: string;
   message?: string;
 };
 
-type DashScopeTaskResultPayload = {
-  output?: {
-    task_status?: string;
-    code?: string;
-    message?: string;
-    results?: Array<{
+type Seed3DStatusResponse = {
+  request_id?: string;
+  id?: string;
+  status?: string;
+  result?: Array<{
+    url?: string;
+  }>;
+  error_code?: string;
+  error_message?: string;
+  code?: string;
+  message?: string;
+  task?: {
+    task_id?: string;
+    status?: string;
+    result?: Array<{
       url?: string;
     }>;
+    error_code?: string;
+    error_message?: string;
   };
-  code?: string;
-  message?: string;
 };
 
-function getDashScopeApiBase() {
-  const baseUrl = aiConfig.baseURL.replace(/\/$/, "");
-  const origin = new URL(baseUrl).origin;
-
-  return `${origin}/api/v1`;
-}
-
-function getDashScopeImageSynthesisEndpoint() {
+function getApiBase() {
   if (typeof window !== "undefined" && ["localhost", "127.0.0.1", "0.0.0.0"].includes(window.location.hostname)) {
-    return "/api/ai/services/aigc/image2image/image-synthesis";
+    return "/api/ai";
   }
-
-  return `${getDashScopeApiBase()}/services/aigc/image2image/image-synthesis`;
+  return aiConfig.baseURL.replace(/\/$/, "");
 }
 
-function getDashScopeTaskEndpoint(taskId: string) {
-  if (typeof window !== "undefined" && ["localhost", "127.0.0.1", "0.0.0.0"].includes(window.location.hostname)) {
-    return `/api/ai/tasks/${taskId}`;
+function getTaskCreateEndpoint() {
+  const base = getApiBase();
+  if (base === "/api/ai") {
+    return `${base}/contents/generations/tasks`;
   }
-
-  return `${getDashScopeApiBase()}/tasks/${taskId}`;
+  return `${base}/api/v3/contents/generations/tasks`;
 }
 
-async function blobToDataUrl(blob: Blob) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onload = () => {
-      if (typeof reader.result === "string") {
-        resolve(reader.result);
-        return;
-      }
-
-      reject(new Error("AI 返回了无法读取的图片结果，请稍后重试。"));
-    };
-
-    reader.onerror = () => reject(new Error("AI 返回了无法读取的图片结果，请稍后重试。"));
-    reader.readAsDataURL(blob);
-  });
-}
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
-  return new Promise<T>((resolve, reject) => {
-    const timer = window.setTimeout(() => {
-      reject(new Error("AI 修复处理超时，请稍后重试。"));
-    }, timeoutMs);
-
-    promise
-      .then((value) => {
-        window.clearTimeout(timer);
-        resolve(value);
-      })
-      .catch((error) => {
-        window.clearTimeout(timer);
-        reject(error);
-      });
-  });
+function getTaskStatusEndpoint(taskId: string) {
+  const base = getApiBase();
+  if (base === "/api/ai") {
+    return `${base}/contents/generations/tasks/${taskId}`;
+  }
+  return `${base}/api/v3/contents/generations/tasks/${taskId}`;
 }
 
 function wait(ms: number) {
@@ -100,32 +69,28 @@ function wait(ms: number) {
   });
 }
 
-function buildDashScopeErrorMessage(payloadMessage: string | undefined, fallbackMessage: string) {
+function buildSeed3DErrorMessage(payloadMessage: string | undefined, fallbackMessage: string) {
   const rawMessage = payloadMessage?.trim();
   const normalized = rawMessage?.toLowerCase() ?? "";
 
-  const providerAccountIssue =
-    normalized.includes("access denied") ||
-    normalized.includes("good standing") ||
-    normalized.includes("overdue payment") ||
-    normalized.includes("insufficient balance") ||
-    normalized.includes("quota") ||
-    normalized.includes("forbidden");
-
-  if (providerAccountIssue) {
-    return `AI 修复当前不可用：阿里云模型服务账号状态异常、余额不足或无权限，请检查 DashScope 账户余额、服务权限和 API Key。原始错误：${rawMessage}`;
+  if (normalized.includes("access denied") || normalized.includes("forbidden") || normalized.includes("quota")) {
+    return `AI3D 当前不可用：账号权限不足或额度超限，请检查 API Key 和账户状态。原始错误：${rawMessage}`;
   }
 
   if (normalized.includes("unauthorized") || normalized.includes("invalid api key") || normalized.includes("api key")) {
-    return `AI 修复当前不可用：DashScope API Key 无效或权限不足，请检查 src/features/editor/runtime/aiConfig.ts 中的配置。原始错误：${rawMessage}`;
+    return `AI3D 当前不可用：API Key 无效，请检查 .env 中的 VITE_AI_API_KEY 配置。原始错误：${rawMessage}`;
+  }
+
+  if (normalized.includes("insufficient balance") || normalized.includes("余额")) {
+    return "AI3D 当前不可用：账户余额不足，请充值后重试。";
   }
 
   if (normalized.includes("timeout")) {
-    return "AI 修复处理超时，请稍后重试。";
+    return "AI3D 处理超时，请稍后重试。";
   }
 
   if (normalized.includes("network") || normalized.includes("failed to fetch")) {
-    return "AI 修复请求失败：网络连接异常，暂时无法访问模型服务。";
+    return "AI3D 请求失败：网络连接异常，暂时无法访问模型服务。";
   }
 
   if (rawMessage) {
@@ -135,137 +100,214 @@ function buildDashScopeErrorMessage(payloadMessage: string | undefined, fallback
   return fallbackMessage;
 }
 
-async function fetchResultAsDataUrl(url: string) {
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    throw new Error(`AI 修复结果图片下载失败（${response.status}）。`);
+function normalizeTaskStatus(providerStatus: string): Seed3DTaskResult["status"] {
+  const normalized = providerStatus.toLowerCase();
+  
+  if (normalized.includes("succeeded") || normalized.includes("completed")) {
+    return "succeeded";
   }
-
-  return blobToDataUrl(await response.blob());
+  
+  if (normalized.includes("failed") || normalized.includes("error") || normalized.includes("canceled")) {
+    return "failed";
+  }
+  
+  if (normalized.includes("running") || normalized.includes("processing") || normalized.includes("generating")) {
+    return "running";
+  }
+  
+  return "pending";
 }
 
-async function createDashScopeTask(input: AiEditInput) {
-  const response = await fetch(getDashScopeImageSynthesisEndpoint(), {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${aiConfig.apiKey}`,
-      "Content-Type": "application/json",
-      "X-DashScope-Async": "enable"
-    },
-    body: JSON.stringify({
-      model: aiConfig.model,
-      input: {
-        function: "description_edit_with_mask",
-        prompt: input.prompt?.trim() || "修复遮罩区域，使结果自然、边缘融合。",
-        base_image_url: input.sourceDataUrl,
-        mask_image_url: input.maskDataUrl
-      },
-      parameters: {
-        n: 1
-      }
-    })
-  });
-
-  const payload = (await response.json()) as DashScopeTaskCreatePayload;
-
-  if (!response.ok) {
-    throw new Error(
-      buildDashScopeErrorMessage(
-        payload.message || payload.code,
-        `AI 修复任务创建失败（${response.status}）。`
-      )
-    );
+function extractFileNameFromUrl(url: string): string {
+  try {
+    const parsedUrl = new URL(url);
+    const pathParts = parsedUrl.pathname.split("/");
+    const fileName = pathParts[pathParts.length - 1];
+    return fileName || "model.glb";
+  } catch {
+    return "model.glb";
   }
-
-  const taskId = payload.output?.task_id;
-
-  if (!taskId) {
-    throw new Error("AI 修复任务创建成功，但没有返回 task_id。");
-  }
-
-  return taskId;
 }
 
-async function pollDashScopeTask(taskId: string) {
-  const startedAt = Date.now();
-
-  while (Date.now() - startedAt < aiConfig.timeoutMs) {
-    const response = await fetch(getDashScopeTaskEndpoint(taskId), {
-      headers: {
-        Authorization: `Bearer ${aiConfig.apiKey}`
-      }
-    });
-
-    const payload = (await response.json()) as DashScopeTaskResultPayload;
-
-    if (!response.ok) {
-      throw new Error(
-        buildDashScopeErrorMessage(
-          payload.message || payload.code || payload.output?.message || payload.output?.code,
-          `AI 修复任务查询失败（${response.status}）。`
-        )
-      );
-    }
-
-    const status = payload.output?.task_status;
-
-    if (status === "SUCCEEDED") {
-      const url = payload.output?.results?.[0]?.url;
-
-      if (!url) {
-        throw new Error("AI 修复成功，但没有返回结果图片。");
-      }
-
-      return fetchResultAsDataUrl(url);
-    }
-
-    if (status === "FAILED" || status === "CANCELED" || status === "UNKNOWN") {
-      throw new Error(
-        buildDashScopeErrorMessage(
-          payload.output?.message || payload.output?.code,
-          `AI 修复失败，任务状态：${status}。`
-        )
-      );
-    }
-
-    await wait(1500);
-  }
-
-  throw new Error("AI 修复处理超时，请稍后重试。");
-}
-
-async function callDashScopeMaskedEdit(input: AiEditInput): Promise<AiBridgeResult> {
+export async function createSeed3dTask(imageUrl: string, prompt: string): Promise<Seed3DTaskResult> {
   if (!hasAiConfig()) {
     return {
-      success: false,
-      imageDataUrl: null,
-      errorMessage: "AI 配置不完整，请先在 src/features/editor/runtime/aiConfig.ts 中填写 DashScope 的 baseURL、apiKey 和 model。"
+      taskId: null,
+      status: "failed",
+      downloadUrl: null,
+      fileName: null,
+      providerModel: null,
+      errorMessage: "AI 配置不完整，请在 .env 中配置 VITE_AI_BASE_URL、VITE_AI_API_KEY 和 VITE_AI_MODEL。"
     };
   }
 
+  const isBase64Image = imageUrl.startsWith("data:image/");
+  
+  let imageContent;
+  if (isBase64Image) {
+    imageContent = { type: "image_url", image_url: { url: imageUrl } };
+  } else {
+    imageContent = { type: "image_url", image_url: { url: imageUrl } };
+  }
+
   try {
-    const taskId = await withTimeout(createDashScopeTask(input), aiConfig.timeoutMs);
-    const imageDataUrl = await withTimeout(pollDashScopeTask(taskId), aiConfig.timeoutMs + 15_000);
+    const response = await fetch(getTaskCreateEndpoint(), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${aiConfig.apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: aiConfig.model,
+        content: [
+          { type: "text", text: prompt?.trim() || "生成高质量3D模型。" },
+          imageContent
+        ],
+        parameters: {
+          n: 1
+        }
+      })
+    });
+
+    const payload = (await response.json()) as Seed3DCreateResponse;
+
+    if (!response.ok) {
+      throw new Error(
+        buildSeed3DErrorMessage(
+          payload.message || payload.code,
+          `AI3D 任务创建失败（${response.status}）。`
+        )
+      );
+    }
+
+    const taskId = payload.id || payload.task_id;
+
+    if (!taskId) {
+      throw new Error("AI3D 任务创建成功，但没有返回任务 ID。");
+    }
 
     return {
-      success: true,
-      imageDataUrl,
+      taskId,
+      status: "pending",
+      downloadUrl: null,
+      fileName: null,
+      providerModel: aiConfig.model,
       errorMessage: null
     };
   } catch (error) {
     return {
-      success: false,
-      imageDataUrl: null,
-      errorMessage: error instanceof Error ? error.message : "AI 修复失败，请稍后重试。"
+      taskId: null,
+      status: "failed",
+      downloadUrl: null,
+      fileName: null,
+      providerModel: null,
+      errorMessage: error instanceof Error ? error.message : "AI3D 任务创建失败。"
     };
   }
 }
 
-export async function inpaintImage(input: AiEditInput) {
-  return callDashScopeMaskedEdit(input);
+export async function pollSeed3dTask(taskId: string): Promise<Seed3DTaskResult> {
+  if (!hasAiConfig()) {
+    return {
+      taskId,
+      status: "failed",
+      downloadUrl: null,
+      fileName: null,
+      providerModel: null,
+      errorMessage: "AI 配置不完整，请在 .env 中配置相关环境变量。"
+    };
+  }
+
+  const startedAt = Date.now();
+  const maxWaitTime = aiConfig.timeoutMs;
+
+  try {
+    while (Date.now() - startedAt < maxWaitTime) {
+      const response = await fetch(getTaskStatusEndpoint(taskId), {
+        headers: {
+          Authorization: `Bearer ${aiConfig.apiKey}`,
+          "Content-Type": "application/json"
+        }
+      });
+
+      const payload = (await response.json()) as Seed3DStatusResponse;
+
+      if (!response.ok) {
+        throw new Error(
+          buildSeed3DErrorMessage(
+            payload.message || payload.code || payload.task?.error_message || payload.task?.error_code,
+            `AI3D 任务查询失败（${response.status}）。`
+          )
+        );
+      }
+
+      const providerStatus = payload.status ?? payload.task?.status ?? "";
+      
+      if (!providerStatus) {
+        throw new Error("AI3D 任务查询失败，未返回任务信息。");
+      }
+
+      const status = normalizeTaskStatus(providerStatus);
+      const resultUrl = payload.result?.[0]?.url ?? payload.task?.result?.[0]?.url;
+
+      if (status === "succeeded") {
+        
+        if (!resultUrl) {
+          throw new Error("AI3D 任务成功，但没有返回结果文件。");
+        }
+
+        return {
+          taskId,
+          status: "succeeded",
+          downloadUrl: resultUrl,
+          fileName: extractFileNameFromUrl(resultUrl),
+          providerModel: aiConfig.model,
+          errorMessage: null
+        };
+      }
+
+      if (status === "failed") {
+        throw new Error(
+          buildSeed3DErrorMessage(
+            payload.error_message || payload.error_code || payload.task?.error_message || payload.task?.error_code,
+            `AI3D 任务失败，状态：${providerStatus}。`
+          )
+        );
+      }
+
+      await wait(2000);
+    }
+
+    throw new Error("AI3D 处理超时，请稍后重试。");
+  } catch (error) {
+    return {
+      taskId,
+      status: "failed",
+      downloadUrl: null,
+      fileName: null,
+      providerModel: aiConfig.model,
+      errorMessage: error instanceof Error ? error.message : "AI3D 任务轮询失败。"
+    };
+  }
 }
 
-export async function outpaintImage(input: AiEditInput) {
-  return callDashScopeMaskedEdit(input);
+export async function runSeed3dTask(imageUrl: string, prompt: string): Promise<Seed3DTaskResult> {
+  const createResult = await createSeed3dTask(imageUrl, prompt);
+  
+  if (createResult.status === "failed") {
+    return createResult;
+  }
+
+  if (!createResult.taskId) {
+    return {
+      taskId: null,
+      status: "failed",
+      downloadUrl: null,
+      fileName: null,
+      providerModel: null,
+      errorMessage: "AI3D 任务创建失败，未获取到任务 ID。"
+    };
+  }
+
+  return pollSeed3dTask(createResult.taskId);
 }

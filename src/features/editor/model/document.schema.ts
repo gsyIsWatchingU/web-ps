@@ -101,20 +101,10 @@ const imageLayerSchema = layerBaseSchema.extend({
     temperature: z.number(),
     hue: z.number().default(0)
   }),
-  mask: z
-    .object({
-      points: z.array(
-        z.object({
-          x: z.number(),
-          y: z.number()
-        })
-      )
-    })
-    .default({ points: [] }),
   aiMeta: z.object({
     prompt: z.string(),
     expandPrompt: z.string(),
-    lastAiAction: z.enum(["seed3d", "outpaint", "inpaint"]).nullable(),
+    lastAiAction: z.enum(["seed3d", "outpaint"]).nullable(),
     lastAiRequestedAt: z.string().nullable(),
     lastAiSucceededAt: z.string().nullable(),
     lastAiError: z.string().nullable(),

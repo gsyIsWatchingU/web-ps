@@ -62,10 +62,7 @@ export const editorToolIds = [
   "ai3d",
   "text",
   "filter",
-  "shape",
-  "brush",
-  "eraser",
-  "repair"
+  "shape"
 ] as const;
 
 export type CanvasPresetId = (typeof canvasPresets)[number]["id"];
@@ -137,7 +134,7 @@ export type Model3dTaskMeta = {
 export type ImageAiMeta = {
   prompt: string;
   expandPrompt: string;
-  lastAiAction: "seed3d" | "outpaint" | "inpaint" | null;
+  lastAiAction: "seed3d" | "outpaint" | null;
   lastAiRequestedAt: string | null;
   lastAiSucceededAt: string | null;
   lastAiError: string | null;
@@ -153,7 +150,6 @@ export type ImageLayer = LayerBase & {
   presetFilterId: ImagePresetFilterId | null;
   enhanceProfileId: EnhanceProfileId | null;
   filters: ImageFilters;
-  mask: ImageMask;
   aiMeta: ImageAiMeta;
 };
 
@@ -651,7 +647,7 @@ export function createImageCrop(width: number, height: number): ImageCrop {
 
 export function createDefaultImageAiMeta(): ImageAiMeta {
   return {
-    prompt: "去掉瑕疵和干扰元素，保持商品主体、光影和画面风格自然一致。",
+    prompt: "生成高质量3D模型。",
     expandPrompt: "在延展画面的同时保持主体位置、背景氛围和整体光线一致。",
     lastAiAction: null,
     lastAiRequestedAt: null,
@@ -664,36 +660,6 @@ export function createDefaultImageAiMeta(): ImageAiMeta {
       fileName: null,
       providerModel: null
     }
-  };
-}
-
-export type MaskPoint = {
-  x: number;
-  y: number;
-};
-
-export type MaskStroke = {
-  id: string;
-  mode: "paint" | "erase";
-  size: number;
-  points: MaskPoint[];
-};
-
-export type ImageMask = {
-  points: MaskPoint[];
-  brushSize: number;
-  showPreview: boolean;
-  strokes: MaskStroke[];
-  activeStrokeId: string | null;
-};
-
-export function createDefaultImageMask(): ImageMask {
-  return {
-    points: [],
-    brushSize: 50,
-    showPreview: true,
-    strokes: [],
-    activeStrokeId: null
   };
 }
 
@@ -757,7 +723,6 @@ export function createInitialDocument(): EditorDocument {
         presetFilterId: null,
         enhanceProfileId: null,
         filters: createDefaultImageFilters(),
-        mask: createDefaultImageMask(),
         aiMeta: createDefaultImageAiMeta()
       },
       {

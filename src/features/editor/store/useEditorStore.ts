@@ -5,12 +5,10 @@ import {
   createDefaultDoodleStyle,
   createDefaultImageAiMeta,
   createDefaultImageFilters,
-  createDefaultImageMask,
   createDefaultTextStyle,
   createImageCrop,
   createInitialDocument,
   createLayerId,
-  createStrokeId,
   getCanvasPreset,
   getDecorationDefaultSize,
   getDefaultSafeAreaInset,
@@ -34,12 +32,11 @@ import {
   type ImageLayer,
   type ImagePresetFilterId,
   type LayerTransform,
-  type MaskPoint,
   type TextLayer,
   type TextTemplateId
 } from "../model/document";
 import { editorDocumentSchema } from "../model/document.schema";
-import { inpaintImage, outpaintImage } from "../runtime/aiBridge";
+import { runSeed3dTask } from "../runtime/aiBridge";
 
 type LayerOrderDirection = "up" | "down";
 type AlignmentAxis = "horizontal" | "vertical";
@@ -119,22 +116,11 @@ type EditorStore = {
   markWorkflowApplied: () => void;
   updateAiPrompt: (layerId: string, prompt: string) => void;
   updateAiExpandPrompt: (layerId: string, prompt: string) => void;
-  updateMaskBrushSize: (layerId: string, size: number) => void;
-  toggleMaskPreview: (layerId: string) => void;
-  clearMask: (layerId: string) => void;
-  startMaskStroke: (
-    layerId: string,
-    mode: "paint" | "erase",
-    point: MaskPoint
-  ) => void;
-  appendMaskPoint: (layerId: string, point: MaskPoint) => void;
-  finishMaskStroke: (layerId: string) => void;
   startCropSession: (layerId: string) => void;
   updateCropSession: (crop: Partial<ImageCrop>) => void;
   commitCropSession: () => void;
   cancelCropSession: () => void;
-  applyAiRepair: (layerId: string) => Promise<AsyncResult>;
-  applyAiExtend: (layerId: string, presetId: CanvasPresetId) => Promise<AsyncResult>;
+  applyAi3d: (layerId: string, customUrl?: string) => Promise<AsyncResult>;
   clearCanvas: () => void;
   undo: () => void;
   redo: () => void;
@@ -336,15 +322,7 @@ function stripTransientDocumentState(document: EditorDocument): EditorDocument {
         mode: document.canvas.displayBackground?.mode ?? ("grid" satisfies CanvasBackgroundMode),
         color: document.canvas.displayBackground?.color ?? "#fbf6ef"
       }
-    },
-    layers: document.layers.map((layer) =>
-      layer.type === "image"
-        ? {
-            ...layer,
-            mask: createDefaultImageMask()
-          }
-        : layer
-    )
+    }
   };
 }
 
@@ -568,97 +546,6 @@ async function renderLayerCropDataUrl(layer: ImageLayer) {
   return canvas.toDataURL("image/png");
 }
 
-function renderMaskDataUrl(layer: ImageLayer) {
-  const canvas = window.document.createElement("canvas");
-  canvas.width = layer.crop.width;
-  canvas.height = layer.crop.height;
-
-  const context = canvas.getContext("2d");
-
-  if (!context) {
-    throw new Error("无法创建蒙版画布。");
-  }
-
-  context.fillStyle = "#ffffff";
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.lineCap = "round";
-  context.lineJoin = "round";
-
-  for (const stroke of layer.mask.strokes) {
-    if (stroke.points.length === 0) {
-      continue;
-    }
-
-    context.save();
-    context.globalCompositeOperation =
-      stroke.mode === "paint" ? "destination-out" : "source-over";
-    context.strokeStyle = "#ffffff";
-    context.lineWidth = stroke.size;
-
-    context.beginPath();
-    stroke.points.forEach((point, index) => {
-      const x = point.x * canvas.width;
-      const y = point.y * canvas.height;
-
-      if (index === 0) {
-        context.moveTo(x, y);
-      } else {
-        context.lineTo(x, y);
-      }
-    });
-    context.stroke();
-    context.restore();
-  }
-
-  return canvas.toDataURL("image/png");
-}
-
-async function createOutpaintPayload(layer: ImageLayer, targetRatio: number) {
-  const sourceImage = await loadImageElement(await renderLayerCropDataUrl(layer));
-  const currentWidth = layer.crop.width;
-  const currentHeight = layer.crop.height;
-  const currentRatio = currentWidth / currentHeight;
-
-  let targetWidth = currentWidth;
-  let targetHeight = currentHeight;
-
-  if (currentRatio > targetRatio) {
-    targetHeight = Math.round(currentWidth / targetRatio);
-  } else {
-    targetWidth = Math.round(currentHeight * targetRatio);
-  }
-
-  const sourceCanvas = window.document.createElement("canvas");
-  sourceCanvas.width = targetWidth;
-  sourceCanvas.height = targetHeight;
-  const sourceContext = sourceCanvas.getContext("2d");
-
-  const maskCanvas = window.document.createElement("canvas");
-  maskCanvas.width = targetWidth;
-  maskCanvas.height = targetHeight;
-  const maskContext = maskCanvas.getContext("2d");
-
-  if (!sourceContext || !maskContext) {
-    throw new Error("无法创建扩图画布。");
-  }
-
-  const offsetX = Math.round((targetWidth - currentWidth) / 2);
-  const offsetY = Math.round((targetHeight - currentHeight) / 2);
-
-  sourceContext.clearRect(0, 0, targetWidth, targetHeight);
-  sourceContext.drawImage(sourceImage, offsetX, offsetY, currentWidth, currentHeight);
-
-  maskContext.fillStyle = "#ffffff";
-  maskContext.fillRect(0, 0, targetWidth, targetHeight);
-  maskContext.clearRect(offsetX, offsetY, currentWidth, currentHeight);
-
-  return {
-    sourceDataUrl: sourceCanvas.toDataURL("image/png"),
-    maskDataUrl: maskCanvas.toDataURL("image/png"),
-    size: `${targetWidth}x${targetHeight}` as `${number}x${number}`
-  };
-}
-
 export const useEditorStore = create<EditorStore>((set, get) => ({
   activeTool: "select",
   selectedLayerIds: [initialDocument.layers[1]?.id ?? initialDocument.layers[0]?.id].filter(
@@ -772,7 +659,6 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         presetFilterId: null,
         enhanceProfileId: null,
         filters: createDefaultImageFilters(),
-        mask: createDefaultImageMask(),
         aiMeta: createDefaultImageAiMeta()
       };
       const normalized = normalizeLayerOrder([...state.document.layers, nextLayer]);
@@ -1416,135 +1302,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         )
       )
     ),
-  updateMaskBrushSize: (layerId, size) =>
-    set((state) =>
-      commitDocumentChange(
-        state,
-        updateLayers(state.document, (layers) =>
-          layers.map((layer) =>
-            layer.id === layerId && layer.type === "image"
-              ? {
-                  ...layer,
-                  mask: {
-                    ...layer.mask,
-                    brushSize: clamp(size, 8, 160)
-                  }
-                }
-              : layer
-          )
-        )
-      )
-    ),
-  toggleMaskPreview: (layerId) =>
-    set((state) =>
-      commitDocumentChange(
-        state,
-        updateLayers(state.document, (layers) =>
-          layers.map((layer) =>
-            layer.id === layerId && layer.type === "image"
-              ? {
-                  ...layer,
-                  mask: {
-                    ...layer.mask,
-                    showPreview: !layer.mask.showPreview
-                  }
-                }
-              : layer
-          )
-        )
-      )
-    ),
-  clearMask: (layerId) =>
-    set((state) =>
-      commitDocumentChange(
-        state,
-        updateLayers(state.document, (layers) =>
-          layers.map((layer) =>
-            layer.id === layerId && layer.type === "image"
-              ? {
-                  ...layer,
-                  mask: createDefaultImageMask()
-                }
-              : layer
-          )
-        )
-      )
-    ),
-  startMaskStroke: (layerId, mode, point) =>
-    set((state) => ({
-      document: updateLayers(state.document, (layers) =>
-        layers.map((layer) =>
-          layer.id === layerId && layer.type === "image"
-            ? (() => {
-                const strokeId = createStrokeId();
-
-                return {
-                  ...layer,
-                  mask: {
-                    ...layer.mask,
-                    activeStrokeId: strokeId,
-                    strokes: [
-                      ...layer.mask.strokes,
-                      {
-                        id: strokeId,
-                        mode,
-                        size: layer.mask.brushSize,
-                        points: [point]
-                      }
-                    ]
-                  }
-                };
-              })()
-            : layer
-        )
-      )
-    })),
-  appendMaskPoint: (layerId, point) =>
-    set((state) => ({
-      document: updateLayers(state.document, (layers) =>
-        layers.map((layer) => {
-          if (layer.id !== layerId || layer.type !== "image") {
-            return layer;
-          }
-
-          const activeStroke = layer.mask.strokes.at(-1);
-
-          if (!activeStroke) {
-            return layer;
-          }
-
-          return {
-            ...layer,
-            mask: {
-              ...layer.mask,
-              strokes: [
-                ...layer.mask.strokes.slice(0, -1),
-                {
-                  ...activeStroke,
-                  points: [...activeStroke.points, point]
-                }
-              ]
-            }
-          };
-        })
-      )
-    })),
-  finishMaskStroke: (layerId) =>
-    set((state) => ({
-      document: updateLayers(state.document, (layers) =>
-        layers.map((layer) =>
-          layer.id === layerId && layer.type === "image"
-            ? {
-                ...layer,
-                mask: {
-                  ...layer.mask,
-                  activeStrokeId: null
-                }
-              }
-            : layer
-        )
-      )
-    })),
+  
   startCropSession: (layerId) =>
     set((state) => {
       const layer = state.document.layers.find(
@@ -1621,7 +1379,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       cropSession: null,
       activeTool: "select"
     })),
-  applyAiRepair: async (layerId) => {
+  applyAi3d: async (layerId, customUrl) => {
     const state = get();
     const layer = state.document.layers.find(
       (entry): entry is ImageLayer => entry.id === layerId && entry.type === "image"
@@ -1631,17 +1389,19 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       return { success: false, errorMessage: "请选择一个图片层。" };
     }
 
-    if (!layerSupportsAi(layer)) {
-      return {
-        success: false,
-        errorMessage: "AI 修复暂不支持已旋转或翻转的图片，请先恢复为正向图片。"
-      };
-    }
+    const targetUrl = customUrl && (customUrl.startsWith("http://") || customUrl.startsWith("https://"))
+      ? customUrl
+      : layer.source;
 
-    if (!layer.mask.strokes.some((stroke) => stroke.mode === "paint" && stroke.points.length > 1)) {
+    const isValidImageSource = 
+      targetUrl.startsWith("http://") || 
+      targetUrl.startsWith("https://") || 
+      targetUrl.startsWith("data:image/");
+
+    if (!isValidImageSource) {
       return {
         success: false,
-        errorMessage: "请先涂抹需要修复的区域。"
+        errorMessage: "请提供有效的图片。支持 http/https URL 或本地上传的图片。"
       };
     }
 
@@ -1653,9 +1413,16 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
                 ...entry,
                 aiMeta: {
                   ...entry.aiMeta,
-                  lastAiAction: "inpaint",
+                  lastAiAction: "seed3d",
                   lastAiRequestedAt: new Date().toISOString(),
-                  lastAiError: null
+                  lastAiError: null,
+                  model3dTask: {
+                    taskId: null,
+                    status: "pending",
+                    downloadUrl: null,
+                    fileName: null,
+                    providerModel: null
+                  }
                 }
               }
             : entry
@@ -1664,67 +1431,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     }));
 
     try {
-      const sourceDataUrl = await renderLayerCropDataUrl(layer);
-      const maskDataUrl = renderMaskDataUrl(layer);
-      const result = await inpaintImage({
-        sourceDataUrl,
-        maskDataUrl,
-        prompt: layer.aiMeta.prompt,
-        size: `${layer.crop.width}x${layer.crop.height}`
-      });
-
-      if (!result.success || !result.imageDataUrl) {
-        set((current) => ({
-          document: updateLayers(current.document, (layers) =>
-            layers.map((entry) =>
-              entry.id === layerId && entry.type === "image"
-                ? {
-                    ...entry,
-                    aiMeta: {
-                      ...entry.aiMeta,
-                      lastAiError: result.errorMessage
-                    }
-                  }
-                : entry
-            )
-          )
-        }));
-
-        return result;
-      }
-
-      const imageDataUrl = result.imageDataUrl;
-      const size = await getImageSize(imageDataUrl);
-
-      set((current) =>
-        commitDocumentChange(
-          current,
-          updateLayers(current.document, (layers) =>
-            layers.map((entry) =>
-              entry.id === layerId && entry.type === "image"
-                ? {
-                    ...entry,
-                    source: imageDataUrl,
-                    originalWidth: size.width,
-                    originalHeight: size.height,
-                    crop: createImageCrop(size.width, size.height),
-                    mask: createDefaultImageMask(),
-                    aiMeta: {
-                      ...entry.aiMeta,
-                      lastAiAction: "inpaint",
-                      lastAiSucceededAt: new Date().toISOString(),
-                      lastAiError: null
-                    }
-                  }
-                : entry
-            )
-          )
-        )
-      );
-
-      return { success: true, errorMessage: null };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "AI 修复失败。";
+      const result = await runSeed3dTask(targetUrl, layer.aiMeta.prompt);
 
       set((current) => ({
         document: updateLayers(current.document, (layers) =>
@@ -1734,7 +1441,15 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
                   ...entry,
                   aiMeta: {
                     ...entry.aiMeta,
-                    lastAiError: message
+                    model3dTask: {
+                      taskId: result.taskId,
+                      status: result.status,
+                      downloadUrl: result.downloadUrl,
+                      fileName: result.fileName,
+                      providerModel: result.providerModel
+                    },
+                    lastAiError: result.errorMessage,
+                    lastAiSucceededAt: result.status === "succeeded" ? new Date().toISOString() : entry.aiMeta.lastAiSucceededAt
                   }
                 }
               : entry
@@ -1742,125 +1457,13 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         )
       }));
 
-      return { success: false, errorMessage: message };
-    }
-  },
-  applyAiExtend: async (layerId, presetId) => {
-    const state = get();
-    const layer = state.document.layers.find(
-      (entry): entry is ImageLayer => entry.id === layerId && entry.type === "image"
-    );
-
-    if (!layer) {
-      return { success: false, errorMessage: "请选择一个图片层。" };
-    }
-
-    if (!layerSupportsAi(layer)) {
-      return {
-        success: false,
-        errorMessage: "AI 扩图暂不支持已旋转或翻转的图片，请先恢复为正向图片。"
-      };
-    }
-
-    const preset = getCanvasPreset(presetId);
-    const targetRatio = preset.width / preset.height;
-
-    set((current) => ({
-      document: updateLayers(current.document, (layers) =>
-        layers.map((entry) =>
-          entry.id === layerId && entry.type === "image"
-            ? {
-                ...entry,
-                aiMeta: {
-                  ...entry.aiMeta,
-                  lastAiAction: "outpaint",
-                  lastAiRequestedAt: new Date().toISOString(),
-                  lastAiError: null
-                }
-              }
-            : entry
-        )
-      )
-    }));
-
-    try {
-      const payload = await createOutpaintPayload(layer, targetRatio);
-      const result = await outpaintImage({
-        sourceDataUrl: payload.sourceDataUrl,
-        maskDataUrl: payload.maskDataUrl,
-        prompt: layer.aiMeta.expandPrompt,
-        size: payload.size
-      });
-
-      if (!result.success || !result.imageDataUrl) {
-        set((current) => ({
-          document: updateLayers(current.document, (layers) =>
-            layers.map((entry) =>
-              entry.id === layerId && entry.type === "image"
-                ? {
-                    ...entry,
-                    aiMeta: {
-                      ...entry.aiMeta,
-                      lastAiError: result.errorMessage
-                    }
-                  }
-                : entry
-            )
-          )
-        }));
-
-        return result;
+      if (result.status === "succeeded") {
+        return { success: true, errorMessage: null };
       }
 
-      const imageDataUrl = result.imageDataUrl;
-      const size = await getImageSize(imageDataUrl);
-
-      set((current) =>
-        commitDocumentChange(
-          current,
-          touchDocument({
-            ...current.document,
-            canvas: {
-              ...current.document.canvas,
-              presetId: preset.id,
-              width: preset.width,
-              height: preset.height
-            },
-            workflowMeta: {
-              ...current.document.workflowMeta,
-              sceneTag: preset.scene
-            },
-            layers: current.document.layers.map((entry) =>
-              entry.id === layerId && entry.type === "image"
-                ? {
-                    ...entry,
-                    source: imageDataUrl,
-                    originalWidth: size.width,
-                    originalHeight: size.height,
-                    crop: createImageCrop(size.width, size.height),
-                    mask: createDefaultImageMask(),
-                    aiMeta: {
-                      ...entry.aiMeta,
-                      lastAiAction: "outpaint",
-                      lastAiSucceededAt: new Date().toISOString(),
-                      lastAiError: null
-                    },
-                    transform: buildImageTransform(
-                      preset.width,
-                      preset.height,
-                      size.width,
-                      size.height
-                    )
-                  }
-                : entry
-            )
-          })
-        )
-      );
-
-      return { success: true, errorMessage: null };
+      return { success: false, errorMessage: result.errorMessage ?? "AI3D 生成失败。" };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "AI 扩图失败。";
+      const message = error instanceof Error ? error.message : "AI3D 生成失败。";
 
       set((current) => ({
         document: updateLayers(current.document, (layers) =>
@@ -1870,6 +1473,10 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
                   ...entry,
                   aiMeta: {
                     ...entry.aiMeta,
+                    model3dTask: {
+                      ...entry.aiMeta.model3dTask,
+                      status: "failed"
+                    },
                     lastAiError: message
                   }
                 }

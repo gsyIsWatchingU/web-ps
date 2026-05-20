@@ -20,7 +20,7 @@ import { hasAiConfig } from "../runtime/aiConfig";
 import { exportDocument } from "../runtime/exportDocument";
 import { renderPresetPreviewDataUrl } from "../runtime/lutEngine";
 import { useEditorStore } from "../store/useEditorStore";
-import { CanvasViewport, type MaskSelectionMode } from "./CanvasViewport";
+import { CanvasViewport } from "./CanvasViewport";
 import { useMessage } from "../../../shared/message";
 
 const EXPORT_STATE_EVENT = "editor:export-state";
@@ -49,7 +49,6 @@ const toolItemsV2 = [
   { id: "brush", label: "圈选修复", hint: "圈出需要 AI 修复的局部区域", icon: "◌" },
   { id: "eraser", label: "擦除圈选", hint: "擦掉多选或误选的修复区域", icon: "⌫" },
   { id: "repair", label: "执行修复", hint: "对当前圈选区域执行 AI 局部修复", icon: "✦" },
-  { id: "text", label: "文字", hint: "添加标题、价格和卖点文案", icon: "T" },
   { id: "filter", label: "滤镜", hint: "套用预设滤镜并微调画面质感", icon: "◐" },
   { id: "shape", label: "装饰", hint: "添加徽章、贴片和强调色块", icon: "◆" }
 ] as const;
@@ -196,24 +195,12 @@ function getScaledDimensions(canvasWidth: number, canvasHeight: number, scalePer
   };
 }
 
-const IMAGE_REQUIRED_TOOLS: ToolId[] = ["crop", "brush", "eraser", "repair", "filter"];
+const IMAGE_REQUIRED_TOOLS: ToolId[] = ["crop", "filter", "ai3d"];
 const FILTER_PREVIEW_SOURCE = "/help/filter-preview-sample.svg";
 
 function buildPersistedDraft(document: EditorDocument, savedAt: string): EditorDocument {
   return {
     ...document,
-    layers: document.layers.map((layer) =>
-      layer.type === "image"
-        ? {
-          ...layer,
-          mask: {
-            ...layer.mask,
-            strokes: [],
-            activeStrokeId: null
-          }
-        }
-        : layer
-    ),
     draftMeta: {
       ...document.draftMeta,
       lastSavedAt: savedAt
@@ -310,37 +297,6 @@ const toolItemsAntd = [
     )
   },
   {
-    id: "brush",
-    label: "圈选修复",
-    hint: "圈出需要 AI 修复的局部区域",
-    icon: (
-      <IconBase>
-        <path d="M8 18c0 1.7-1.3 3-3 3 1.7 0 3-1.3 3-3 0-1-.5-1.8-1.2-2.3L14.5 8a2.5 2.5 0 1 1 3.5 3.5l-7.7 7.7c-.5-.7-1.3-1.2-2.3-1.2Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-      </IconBase>
-    )
-  },
-  {
-    id: "eraser",
-    label: "擦除圈选",
-    hint: "擦掉多选或误选的修复区域",
-    icon: (
-      <IconBase>
-        <path d="M8 7.5 15.5 15a2 2 0 0 1 0 2.8l-1.7 1.7a2 2 0 0 1-2.8 0L4.2 12.7a2 2 0 0 1 0-2.8L7 7.1a2 2 0 0 1 1-.6Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-        <path d="M14 20h6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      </IconBase>
-    )
-  },
-  {
-    id: "repair",
-    label: "执行修复",
-    hint: "对当前圈选区域执行 AI 局部修复",
-    icon: (
-      <IconBase>
-        <path d="m12 3 1.8 4.8L19 9.6l-4.1 2.8L16.4 18 12 14.8 7.6 18l1.5-5.6L5 9.6l5.2-1.8L12 3Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
-      </IconBase>
-    )
-  },
-  {
     id: "text",
     label: "文字",
     hint: "添加标题、价格和卖点文案",
@@ -364,12 +320,13 @@ const toolItemsAntd = [
   },
   {
     id: "ai3d",
-    label: "3D",
-    hint: "生成3D模型",
+    label: "AI3D",
+    hint: "基于图片生成3D模型，仅支持URL图片",
     icon: (
       <IconBase>
-        <circle cx="12" cy="12" r="7" stroke="currentColor" strokeWidth="1.8" />
-        <path d="M12 5a7 7 0 0 1 0 14V5Z" fill="currentColor" opacity="0.22" />
+        <path d="M12 2L2 7l10 5 10-5-10-5z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        <path d="M2 17l10 5 10-5" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        <path d="M2 12l10 5 10-5" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
       </IconBase>
     )
   },
@@ -390,7 +347,7 @@ export function EditorWorkspace() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const message = useMessage();
   const [isExporting, setIsExporting] = useState(false);
-  const [aiBusy, setAiBusy] = useState<"repair" | "extend" | null>(null);
+  const [aiBusy, setAiBusy] = useState<"repair" | "ai3d" | null>(null);
   const [leftSidebarTab, setLeftSidebarTab] = useState<LeftSidebarTab>("tools");
   const [rightSidebarTab, setRightSidebarTab] = useState<RightSidebarTab>("tool");
   const [lastAutoSavedAt, setLastAutoSavedAt] = useState<string | null>(null);
@@ -398,23 +355,21 @@ export function EditorWorkspace() {
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [doodleStyle, setDoodleStyle] = useState(createDefaultDoodleStyle);
-  const [maskSelectionMode, setMaskSelectionMode] = useState<MaskSelectionMode>("rectangle");
   const [filterPreviewSources, setFilterPreviewSources] = useState<
     Record<(typeof imageFilterPresets)[number]["id"], string>
   >({} as Record<(typeof imageFilterPresets)[number]["id"], string>);
+  const [customImageUrl, setCustomImageUrl] = useState("");
   const {
     activeTool,
     cropSession,
     addDecorationLayer,
     addDoodleLayer,
     addTextLayer,
-    applyAiExtend,
-    applyAiRepair,
+    applyAi3d,
     applyEnhanceProfile,
     applyImagePreset,
     applyTextTemplate,
     centerLayer,
-    clearMask,
     clearCanvas,
     commitCropSession,
     document,
@@ -437,9 +392,6 @@ export function EditorWorkspace() {
     setImageCropAspect,
     setSelectedLayerIds,
     startCropSession,
-    startMaskStroke,
-    appendMaskPoint,
-    finishMaskStroke,
     toggleLayerLock,
     toggleLayerVisibility,
     cancelCropSession,
@@ -458,8 +410,6 @@ export function EditorWorkspace() {
     updateLayerName,
     updateLayerOpacity,
     updateLayerTransform,
-    updateMaskBrushSize,
-    toggleMaskPreview,
     updateTextContent,
     updateTextStyle
   } = useEditorStore();
@@ -668,8 +618,8 @@ export function EditorWorkspace() {
     setFeedbackMessage("画布已清空。");
   };
 
-  const handleAiRepair = async () => {
-    if (!requireSelectedImageLayer("repair")) {
+  const handleAi3d = async (customImageUrl?: string) => {
+    if (!requireSelectedImageLayer("ai3d")) {
       return;
     }
 
@@ -679,34 +629,31 @@ export function EditorWorkspace() {
       return;
     }
 
-    setAiBusy("repair");
-    setFeedbackMessage(null);
+    const targetUrl = customImageUrl && (customImageUrl.startsWith("http://") || customImageUrl.startsWith("https://"))
+      ? customImageUrl
+      : imageLayer.source;
 
-    try {
-      const result = await applyAiRepair(imageLayer.id);
-      setFeedbackMessage(result.success ? "AI 局部修复已完成。" : result.errorMessage);
-    } finally {
-      setAiBusy(null);
-    }
-  };
+    const isValidImageSource = 
+      targetUrl.startsWith("http://") || 
+      targetUrl.startsWith("https://") || 
+      targetUrl.startsWith("data:image/");
 
-  const handleAiExtend = async (presetId: CanvasPresetId) => {
-    if (!requireSelectedImageLayer("repair")) {
+    if (!isValidImageSource) {
+      message.warning("请提供有效的图片。支持 http/https URL 或本地上传的图片。");
       return;
     }
 
-    const imageLayer = selectedImageLayer;
-
-    if (!imageLayer) {
-      return;
-    }
-
-    setAiBusy("extend");
+    setAiBusy("ai3d");
     setFeedbackMessage(null);
 
     try {
-      const result = await applyAiExtend(imageLayer.id, presetId);
-      setFeedbackMessage(result.success ? `已完成 ${presetId} 比例的 AI 扩图。` : result.errorMessage);
+      const result = await applyAi3d(imageLayer.id, targetUrl);
+      const task = imageLayer.aiMeta.model3dTask;
+      if (result.success && task.status === "succeeded" && task.downloadUrl) {
+        setFeedbackMessage(`AI3D 生成成功！文件已准备就绪，可下载 ${task.fileName}。`);
+      } else {
+        setFeedbackMessage(result.errorMessage ?? "AI3D 生成失败。");
+      }
     } finally {
       setAiBusy(null);
     }
@@ -860,7 +807,7 @@ export function EditorWorkspace() {
           <div className="workspace__property workspace__property--highlight">
             <div className="workspace__property-label">请先选择图片图层</div>
             <p className="workspace__footer-note">
-              裁剪、圈选修复、擦除圈选、执行修复和滤镜都需要先选中一个图片图层，右侧才能继续编辑。
+              裁剪、滤镜和 AI3D 都需要先选中一个图片图层，右侧才能继续编辑。
             </p>
             <div className="workspace__inline-actions">
               <button
@@ -978,117 +925,7 @@ export function EditorWorkspace() {
         </label>
       ));
 
-      const maskControlsBase = (
-        <>
-          <label className="workspace__property workspace__property--inner">
-            <span className="workspace__property-label">笔刷大小</span>
-            <input
-              className="workspace__range"
-              max={160}
-              min={8}
-              onChange={(event) => updateMaskBrushSize(selectedImageLayer.id, Number(event.target.value))}
-              step={1}
-              type="range"
-              value={selectedImageLayer.mask.brushSize}
-            />
-            <div className="workspace__property-value">{selectedImageLayer.mask.brushSize}px</div>
-          </label>
-          <div className="workspace__inline-actions">
-            <button
-              className="workspace__action-button"
-              onClick={() => toggleMaskPreview(selectedImageLayer.id)}
-              type="button"
-            >
-              {selectedImageLayer.mask.showPreview ? "隐藏蒙版预览" : "显示蒙版预览"}
-            </button>
-            <button className="workspace__action-button" onClick={() => clearMask(selectedImageLayer.id)} type="button">
-              清空蒙版
-            </button>
-          </div>
-        </>
-      );
-
-      const showMaskModeControls = activeTool === "brush" || activeTool === "eraser" || activeTool === "repair";
-      const showApplyAiRepairAction = activeTool === "brush" || activeTool === "eraser";
       const lastAiError = selectedImageLayer.aiMeta.lastAiError;
-      const hasAiServiceAccountIssue = isDashScopeAccountIssueMessage(lastAiError);
-
-      const maskControls = (
-        <>
-          {showMaskModeControls ? (
-            <div className="workspace__property workspace__property--inner">
-              <span className="workspace__property-label">圈选方式</span>
-              <div className="workspace__inline-actions workspace__inline-actions--segmented">
-                <button
-                  className={`workspace__action-button ${maskSelectionMode === "rectangle" ? "is-active" : ""}`}
-                  onClick={() => setMaskSelectionMode("rectangle")}
-                  type="button"
-                >
-                  矩形圈选
-                </button>
-                <button
-                  className={`workspace__action-button ${maskSelectionMode === "freeform" ? "is-active" : ""}`}
-                  onClick={() => setMaskSelectionMode("freeform")}
-                  type="button"
-                >
-                  自由圈选
-                </button>
-              </div>
-            </div>
-          ) : null}
-          {maskControlsBase}
-          {showApplyAiRepairAction ? (
-            <div className="workspace__inline-actions">
-              <button
-                className="workspace__action-button"
-                disabled={aiBusy !== null || !aiConfigured}
-                onClick={() => void handleAiRepair()}
-                type="button"
-              >
-                {aiBusy === "repair" ? "处理中..." : "应用AI修复"}
-              </button>
-            </div>
-          ) : null}
-        </>
-      );
-
-      const aiRepairStatus = (
-        <>
-          <p className="workspace__footer-note">
-            最近一次 AI 修复：{selectedImageLayer.aiMeta.lastAiAction ?? "暂无"} · {formatTime(selectedImageLayer.aiMeta.lastAiSucceededAt)}
-          </p>
-          {lastAiError ? (
-            <p className="workspace__warning">{lastAiError}</p>
-          ) : null}
-        </>
-      );
-
-      const maskControlsWithoutApply = (
-        <>
-          {showMaskModeControls ? (
-            <div className="workspace__property workspace__property--inner">
-              <span className="workspace__property-label">圈选模式</span>
-              <div className="workspace__inline-actions workspace__inline-actions--segmented">
-                <button
-                  className={`workspace__action-button ${maskSelectionMode === "rectangle" ? "is-active" : ""}`}
-                  onClick={() => setMaskSelectionMode("rectangle")}
-                  type="button"
-                >
-                  矩形圈选
-                </button>
-                <button
-                  className={`workspace__action-button ${maskSelectionMode === "freeform" ? "is-active" : ""}`}
-                  onClick={() => setMaskSelectionMode("freeform")}
-                  type="button"
-                >
-                  自由圈选
-                </button>
-              </div>
-            </div>
-          ) : null}
-          {maskControlsBase}
-        </>
-      );
 
       if (activeTool === "crop") {
         return (
@@ -1189,121 +1026,86 @@ export function EditorWorkspace() {
         );
       }
 
-      if (activeTool === "brush" || activeTool === "eraser") {
+      if (activeTool === "ai3d") {
+        const isUrlImage = selectedImageLayer.source.startsWith("http://") || selectedImageLayer.source.startsWith("https://");
+        const isBase64Image = selectedImageLayer.source.startsWith("data:image/");
+        const hasCustomUrl = customImageUrl && (customImageUrl.startsWith("http://") || customImageUrl.startsWith("https://"));
+        const canGenerate = isUrlImage || isBase64Image || hasCustomUrl;
+        const task = selectedImageLayer.aiMeta.model3dTask;
         return (
           <div className="workspace__property-list">
             <div className="workspace__property">
-              <div className="workspace__property-label">
-                {activeTool === "brush" ? "圈选修复" : "擦除圈选"}
-              </div>
-              <p className="workspace__footer-note">先圈选需要修复的区域，再填写提示词并执行局部修复。</p>
+              <div className="workspace__property-label">AI3D 模型生成</div>
+              <p className="workspace__footer-note">
+                基于图片生成 3D 模型，支持本地上传图片和网络图片 URL。
+              </p>
               {!aiConfigured ? (
                 <p className="workspace__warning">
-                  AI 配置未完成，请先在 `src/features/editor/runtime/aiConfig.ts` 中填写 DashScope 的 baseURL、apiKey 和 model。
-                </p>
-              ) : null}
-              {aiConfigured && hasAiServiceAccountIssue ? (
-                <p className="workspace__warning">
-                  AI 配置已加载，但当前 DashScope 服务账号不可用。请检查账户余额、服务权限和 API Key。
+                  AI 配置未完成，请先在环境变量中配置火山引擎 API。
                 </p>
               ) : null}
               <label className="workspace__property workspace__property--inner">
-                <span className="workspace__property-label">修复提示词</span>
+                <span className="workspace__property-label">图片 URL（可选）</span>
+                <input
+                  className="workspace__text-input"
+                  type="url"
+                  onChange={(event) => setCustomImageUrl(event.target.value)}
+                  value={customImageUrl}
+                  placeholder="输入可访问的网络图片 URL..."
+                />
+                {isUrlImage ? (
+                  <p className="workspace__footer-note">
+                    当前图层图片: {selectedImageLayer.source.length > 50 ? selectedImageLayer.source.substring(0, 50) + "..." : selectedImageLayer.source}
+                  </p>
+                ) : isBase64Image ? (
+                  <p className="workspace__footer-note">
+                    当前图层图片: 本地上传图片
+                  </p>
+                ) : null}
+              </label>
+              <label className="workspace__property workspace__property--inner">
+                <span className="workspace__property-label">生成提示词</span>
                 <textarea
                   className="workspace__text-area"
                   onChange={(event) => updateAiPrompt(selectedImageLayer.id, event.target.value)}
                   rows={3}
                   value={selectedImageLayer.aiMeta.prompt}
+                  placeholder="描述图片内容，帮助 AI 生成更准确的 3D 模型..."
                 />
               </label>
-              {maskControlsWithoutApply}
               <div className="workspace__inline-actions">
                 <button
                   className="workspace__action-button"
-                  disabled={aiBusy !== null || !aiConfigured}
-                  onClick={() => void handleAiRepair()}
+                  disabled={aiBusy !== null || !aiConfigured || !canGenerate}
+                  onClick={() => void handleAi3d(customImageUrl)}
                   type="button"
                 >
-                  {aiBusy === "repair" ? "修复处理中..." : "执行局部修复"}
+                  {aiBusy === "ai3d" ? "生成中..." : "生成 3D 模型"}
                 </button>
               </div>
-              {aiRepairStatus}
-            </div>
-          </div>
-        );
-      }
-
-      if (activeTool === "repair") {
-        return (
-          <div className="workspace__property-list">
-            <div className="workspace__property">
-              <div className="workspace__property-label">AI 局部修复</div>
-              <p className="workspace__footer-note">
-                先用圈选工具标记需要修复的区域，再填写提示词并执行局部修复。
-              </p>
-              {!aiConfigured ? (
-                <p className="workspace__warning">
-                  AI 配置未完成，请先在 `src/features/editor/runtime/aiConfig.ts` 中填写 DashScope 的 baseURL、apiKey 和 model。
-                </p>
-              ) : null}
-              {aiConfigured && hasAiServiceAccountIssue ? (
-                <p className="workspace__warning">
-                  AI 配置已加载，但当前 DashScope 服务账号不可用。请检查账户余额、服务权限和 API Key。
-                </p>
-              ) : null}
-              <label className="workspace__property workspace__property--inner">
-                <span className="workspace__property-label">修复提示词</span>
-                <textarea
-                  className="workspace__text-area"
-                  onChange={(event) => updateAiPrompt(selectedImageLayer.id, event.target.value)}
-                  rows={3}
-                  value={selectedImageLayer.aiMeta.prompt}
-                />
-              </label>
-              {maskControls}
-              <div className="workspace__inline-actions">
-                <button
-                  className="workspace__action-button"
-                  disabled={aiBusy !== null || !aiConfigured}
-                  onClick={() => void handleAiRepair()}
-                  type="button"
-                >
-                  {aiBusy === "repair" ? "修复处理中..." : "执行局部修复"}
-                </button>
-              </div>
-              <p className="workspace__footer-note">
-                最近一次 AI 修复：{selectedImageLayer.aiMeta.lastAiAction ?? "暂无"} ·{" "}
-                {formatTime(selectedImageLayer.aiMeta.lastAiSucceededAt)}
-              </p>
-              {selectedImageLayer.aiMeta.lastAiError ? (
-                <p className="workspace__warning">{selectedImageLayer.aiMeta.lastAiError}</p>
-              ) : null}
-            </div>
-
-            <div className="workspace__property">
-              <div className="workspace__property-label">AI 扩图</div>
-              <label className="workspace__property workspace__property--inner">
-                <span className="workspace__property-label">扩图提示词</span>
-                <textarea
-                  className="workspace__text-area"
-                  onChange={(event) => updateAiExpandPrompt(selectedImageLayer.id, event.target.value)}
-                  rows={3}
-                  value={selectedImageLayer.aiMeta.expandPrompt}
-                />
-              </label>
-              <div className="workspace__inline-actions">
-                {(["1:1", "4:5", "9:16"] as CanvasPresetId[]).map((presetId) => (
-                  <button
-                    key={presetId}
+              {task.status === "pending" && aiBusy === "ai3d" ? (
+                <p className="workspace__footer-note">正在创建任务...</p>
+              ) : task.status === "running" ? (
+                <p className="workspace__footer-note">任务处理中，请稍候...</p>
+              ) : task.status === "succeeded" && task.downloadUrl ? (
+                <div className="workspace__inline-actions">
+                  <a
                     className="workspace__action-button"
-                    disabled={aiBusy !== null || !aiConfigured}
-                    onClick={() => void handleAiExtend(presetId)}
-                    type="button"
+                    download={task.fileName}
+                    href={task.downloadUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
                   >
-                    {aiBusy === "extend" ? "扩图处理中..." : `扩图到 ${presetId}`}
-                  </button>
-                ))}
-              </div>
+                    下载模型 ({task.fileName})
+                  </a>
+                </div>
+              ) : null}
+              {lastAiError ? (
+                <p className="workspace__warning">{lastAiError}</p>
+              ) : null}
+              {task.taskId ? (
+                <p className="workspace__footer-note">任务 ID: {task.taskId}</p>
+              ) : null}
             </div>
           </div>
         );
@@ -1483,92 +1285,6 @@ export function EditorWorkspace() {
             </label>
           ))}
 
-          <div className="workspace__property">
-            <div className="workspace__property-label">AI 局部修复</div>
-            <p className="workspace__footer-note">
-              先使用圈选工具标出需要处理的区域，再填写修复提示词并执行局部修复。
-            </p>
-            {!aiConfigured ? (
-              <p className="workspace__warning">
-                请先在 `src/features/editor/runtime/aiConfig.ts` 中配置 API Key 和 Base URL。
-              </p>
-            ) : null}
-            <label className="workspace__property workspace__property--inner">
-              <span className="workspace__property-label">修复提示词</span>
-              <textarea
-                className="workspace__text-area"
-                onChange={(event) => updateAiPrompt(selectedImageLayer.id, event.target.value)}
-                rows={3}
-                value={selectedImageLayer.aiMeta.prompt}
-              />
-            </label>
-            <label className="workspace__property workspace__property--inner">
-              <span className="workspace__property-label">圈选笔刷大小</span>
-              <input
-                className="workspace__range"
-                max={160}
-                min={8}
-                onChange={(event) => updateMaskBrushSize(selectedImageLayer.id, Number(event.target.value))}
-                step={1}
-                type="range"
-                value={selectedImageLayer.mask.brushSize}
-              />
-              <div className="workspace__property-value">{selectedImageLayer.mask.brushSize}px</div>
-            </label>
-            <div className="workspace__inline-actions">
-              <button
-                className="workspace__action-button"
-                onClick={() => toggleMaskPreview(selectedImageLayer.id)}
-                type="button"
-              >
-                {selectedImageLayer.mask.showPreview ? "隐藏圈选预览" : "显示圈选预览"}
-              </button>
-              <button className="workspace__action-button" onClick={() => clearMask(selectedImageLayer.id)} type="button">
-                清空圈选
-              </button>
-              <button
-                className="workspace__action-button"
-                disabled={aiBusy !== null || !aiConfigured}
-                onClick={() => void handleAiRepair()}
-                type="button"
-              >
-                {aiBusy === "repair" ? "处理中..." : "执行 AI 修复"}
-              </button>
-            </div>
-            <p className="workspace__footer-note">
-              最近 AI 动作：{selectedImageLayer.aiMeta.lastAiAction ?? "暂无"} · 最近成功：
-              {formatTime(selectedImageLayer.aiMeta.lastAiSucceededAt)}
-            </p>
-            {selectedImageLayer.aiMeta.lastAiError ? (
-              <p className="workspace__warning">{selectedImageLayer.aiMeta.lastAiError}</p>
-            ) : null}
-          </div>
-
-          <div className="workspace__property">
-            <div className="workspace__property-label">AI 扩图</div>
-            <label className="workspace__property workspace__property--inner">
-              <span className="workspace__property-label">扩图提示词</span>
-              <textarea
-                className="workspace__text-area"
-                onChange={(event) => updateAiExpandPrompt(selectedImageLayer.id, event.target.value)}
-                rows={3}
-                value={selectedImageLayer.aiMeta.expandPrompt}
-              />
-            </label>
-            <div className="workspace__inline-actions">
-              {(["1:1", "4:5", "9:16"] as CanvasPresetId[]).map((presetId) => (
-                <button
-                  key={presetId}
-                  className="workspace__action-button"
-                  disabled={aiBusy !== null || !aiConfigured}
-                  onClick={() => void handleAiExtend(presetId)}
-                  type="button"
-                >
-                  {aiBusy === "extend" ? "扩图中..." : `扩展到 ${presetId}`}
-                </button>
-              ))}
-            </div>
-          </div>
         </div>
       );
     }
@@ -2131,7 +1847,7 @@ export function EditorWorkspace() {
             <section className="workspace__section">
               <h3>工具入口</h3>
               <div className="workspace__tool-stack">
-                {toolItemsAntd.filter((tool) => tool.id !== "hand").map((tool) => (
+                {toolItemsAntd.filter((tool) => tool.id !== "hand" && tool.id !== "shape" && tool.id !== "text").map((tool) => (
                   <button
                     key={tool.id}
                     aria-label={tool.label}
@@ -2245,7 +1961,7 @@ export function EditorWorkspace() {
                 导入图片
               </button>
               <button className="workspace__tool-button" onClick={addTextLayer} type="button">
-                添加文字
+                添加花字
               </button>
               <button className="workspace__tool-button" onClick={addDecorationLayer} type="button">
                 添加装饰
@@ -2257,13 +1973,9 @@ export function EditorWorkspace() {
             activeTool={activeTool}
             cropSession={cropSession}
             document={document}
-            maskSelectionMode={maskSelectionMode}
             onCropSessionChange={updateCropSession}
             doodleStyle={doodleStyle}
             onDoodleCommit={handleDoodleCommit}
-            onMaskAppend={appendMaskPoint}
-            onMaskFinish={finishMaskStroke}
-            onMaskStart={startMaskStroke}
             onSelectionChange={setSelectedLayerIds}
             onTextChange={updateTextContent}
             onTransformChange={updateLayerTransform}

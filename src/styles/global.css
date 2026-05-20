@@ -179,8 +179,7 @@ button {
 .workspace__panel {
   padding: 18px;
   max-height: 100%;
-  overflow: hidden;
-  scrollbar-gutter: stable;
+  overflow: visible;
   position: relative;
   z-index: 1;
 }
@@ -207,8 +206,7 @@ button {
   gap: 14px;
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: visible auto;
 }
 
 .workspace__section,
