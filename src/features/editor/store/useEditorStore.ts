@@ -661,7 +661,9 @@ async function createOutpaintPayload(layer: ImageLayer, targetRatio: number) {
 
 export const useEditorStore = create<EditorStore>((set, get) => ({
   activeTool: "select",
-  selectedLayerIds: getDefaultSelectedLayerIds(initialDocument),
+  selectedLayerIds: [initialDocument.layers[1]?.id ?? initialDocument.layers[0]?.id].filter(
+    (layerId): layerId is string => Boolean(layerId)
+  ),
   document: initialDocument,
   cropSession: null,
   historyPast: [],

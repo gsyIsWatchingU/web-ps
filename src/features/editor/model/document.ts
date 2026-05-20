@@ -4,35 +4,35 @@ export const canvasPresets = [
     label: "1:1",
     width: 1080,
     height: 1080,
-    scene: "\u5546\u54c1\u65b9\u56fe"
+    scene: "商品方图"
   },
   {
     id: "3:4",
     label: "3:4",
     width: 900,
     height: 1200,
-    scene: "\u5546\u54c1\u7ad6\u7248"
+    scene: "商品竖版"
   },
   {
     id: "4:5",
     label: "4:5",
     width: 1080,
     height: 1350,
-    scene: "\u6295\u653e\u4e3b\u56fe"
+    scene: "投放主图"
   },
   {
     id: "9:16",
     label: "9:16",
     width: 1080,
     height: 1920,
-    scene: "\u77ed\u89c6\u9891\u5c01\u9762"
+    scene: "短视频封面"
   },
   {
     id: "custom",
-    label: "\u81ea\u5b9a\u4e49",
+    label: "自定义",
     width: 1200,
     height: 1500,
-    scene: "\u81ea\u5b9a\u4e49\u753b\u5e03"
+    scene: "自定义画布"
   }
 ] as const;
 
@@ -643,9 +643,8 @@ export function createImageCrop(width: number, height: number): ImageCrop {
 
 export function createDefaultImageAiMeta(): ImageAiMeta {
   return {
-    prompt:
-      "\u751f\u6210\u5e72\u51c0\u65e0\u5197\u4f59\u566a\u70b9\u7684\u767d\u6a21\u8d44\u4ea7\uff0c\u4fdd\u7559\u76ee\u6807\u7269\u4f53\u7684\u51e0\u4f55\u7ed3\u6784\u7ec6\u8282\uff0c\u8fb9\u7f18\u6e05\u6670\u9510\u5229\uff0c\u7a7a\u95f4\u900f\u89c6\u548c\u7ed3\u6784\u5408\u7406\uff0c\u4fbf\u4e8e\u540e\u7eed 3D \u6253\u5370\u3002",
-    expandPrompt: "\u5728\u5ef6\u5c55\u753b\u9762\u7684\u540c\u65f6\u4fdd\u6301\u4e3b\u4f53\u4f4d\u7f6e\u3001\u80cc\u666f\u6c1b\u56f4\u548c\u6574\u4f53\u5149\u7ebf\u4e00\u81f4\u3002",
+    prompt: "去掉瑕疵和干扰元素，保持商品主体、光影和画面风格自然一致。",
+    expandPrompt: "在延展画面的同时保持主体位置、背景氛围和整体光线一致。",
     lastAiAction: null,
     lastAiRequestedAt: null,
     lastAiSucceededAt: null,
@@ -686,7 +685,7 @@ export function createInitialDocument(): EditorDocument {
 
   return {
     id: "doc-editor-mvp",
-    name: "AIGC \u4fee\u56fe\u5de5\u4f5c\u53f0",
+    name: "AIGC 修图工作台",
     canvas: {
       presetId: preset.id,
       width: preset.width,
@@ -705,8 +704,7 @@ export function createInitialDocument(): EditorDocument {
     },
     layers: [
       {
-        id: "layer-image-ai-draft",
-        name: "AI \u521d\u7a3f",
+        name: "AI 初稿",
         type: "image",
         visible: true,
         locked: false,
@@ -723,8 +721,7 @@ export function createInitialDocument(): EditorDocument {
         aiMeta: createDefaultImageAiMeta()
       },
       {
-        id: "layer-text-title",
-        name: "\u6807\u9898\u5927\u5b57",
+        name: "标题大字",
         type: "text",
         visible: true,
         locked: false,
@@ -739,13 +736,12 @@ export function createInitialDocument(): EditorDocument {
           flipX: false,
           flipY: false
         },
-        content: "\u7206\u6b3e\u4e3b\u6807\u9898",
+        content: "爆款主标题",
         textTemplateId: "title",
         style: createDefaultTextStyle()
       },
       {
-        id: "layer-decoration-price-badge",
-        name: "\u4ef7\u683c\u8d34\u7247",
+        name: "价格贴片",
         type: "decoration",
         visible: true,
         locked: false,
