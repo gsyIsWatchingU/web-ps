@@ -19,10 +19,10 @@
     <text x="650" y="118" fill="#1C2520" font-size="26">裁剪</text>
     <text x="620" y="154" fill="#59675F" font-size="20">适配投放比例</text>
     <text x="914" y="118" fill="#1C2520" font-size="26">涂抹</text>
-    <text x="884" y="154" fill="#59675F" font-size="20">圈出修复区域</text>
+    <text x="884" y="154" fill="#59675F" font-size="20">圈出调整区域</text>
     <text x="108" y="274" fill="#1C2520" font-size="26">橡皮擦</text>
     <text x="94" y="310" fill="#59675F" font-size="20">缩小蒙版范围</text>
-    <text x="372" y="274" fill="#1C2520" font-size="26">局部修复</text>
+    <text x="372" y="274" fill="#1C2520" font-size="26">局部调整</text>
     <text x="358" y="310" fill="#59675F" font-size="20">发送给 AI 重绘</text>
     <text x="650" y="274" fill="#1C2520" font-size="26">花字</text>
     <text x="620" y="310" fill="#59675F" font-size="20">强化卖点表达</text>

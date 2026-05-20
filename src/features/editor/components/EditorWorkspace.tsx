@@ -47,9 +47,9 @@ const toolItemsV2 = [
   { id: "hand", label: "平移", hint: "拖动画布视口，查看局部细节", icon: "✥" },
   { id: "crop", label: "裁剪", hint: "进入裁剪模式，调整构图和比例", icon: "✂" },
   { id: "doodle", label: "涂鸦", hint: "手绘标记内容，生成可编辑涂鸦图层", icon: "✎" },
-  { id: "brush", label: "圈选修复", hint: "圈出需要 AI 修复的局部区域", icon: "◌" },
-  { id: "eraser", label: "擦除圈选", hint: "擦掉多选或误选的修复区域", icon: "⌫" },
-  { id: "repair", label: "执行修复", hint: "对当前圈选区域执行 AI 局部修复", icon: "✦" },
+  { id: "brush", label: "圈选调整", hint: "圈出需要 AI 调整的局部区域", icon: "◌" },
+  { id: "eraser", label: "擦除圈选", hint: "擦掉多选或误选的调整区域", icon: "⌫" },
+  { id: "repair", label: "执行调整", hint: "对当前圈选区域执行 AI 局部调整", icon: "✦" },
   { id: "filter", label: "滤镜", hint: "套用预设滤镜并微调画面质感", icon: "◐" },
   { id: "shape", label: "装饰", hint: "添加徽章、贴片和强调色块", icon: "◆" }
 ] as const;
@@ -75,29 +75,29 @@ const decorationKindSelectOptions: Array<{
   value: DecorationLayer["decorationKind"];
   label: string;
 }> = [
-  { value: "shape", label: "形状" },
-  { value: "sticker", label: "贴纸" }
-];
+    { value: "shape", label: "形状" },
+    { value: "sticker", label: "贴纸" }
+  ];
 
 const decorationShapeSelectOptions: Array<{
   value: DecorationLayer["shape"];
   label: string;
 }> = [
-  { value: "heart", label: "心形" },
-  { value: "circle", label: "圆形" },
-  { value: "rectangle", label: "长方形" }
-];
+    { value: "heart", label: "心形" },
+    { value: "circle", label: "圆形" },
+    { value: "rectangle", label: "长方形" }
+  ];
 
 const decorationStickerSelectOptions: Array<{
   value: DecorationLayer["sticker"];
   label: string;
 }> = [
-  { value: "star", label: "星星" },
-  { value: "ribbon", label: "蝴蝶结" },
-  { value: "bear", label: "小熊" },
-  { value: "strawberry", label: "草莓" },
-  { value: "sparkle", label: "闪光" }
-];
+    { value: "star", label: "星星" },
+    { value: "ribbon", label: "蝴蝶结" },
+    { value: "bear", label: "小熊" },
+    { value: "strawberry", label: "草莓" },
+    { value: "sparkle", label: "闪光" }
+  ];
 
 const fontWeightOptions: Array<{
   value: TextLayer["style"]["fontWeight"];
@@ -300,7 +300,7 @@ const toolItemsAntd = [
   {
     id: "repair",
     label: "局部调整",
-    hint: "框选需要AI修复的局部区域",
+    hint: "框选需要AI调整的局部区域",
     icon: (
       <IconBase>
         <path d="M6 17 17 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
@@ -666,9 +666,9 @@ export function EditorWorkspace() {
 
     const targetUrl = imageLayer.source;
 
-    const isValidImageSource = 
-      targetUrl.startsWith("http://") || 
-      targetUrl.startsWith("https://") || 
+    const isValidImageSource =
+      targetUrl.startsWith("http://") ||
+      targetUrl.startsWith("https://") ||
       targetUrl.startsWith("data:image/");
 
     if (!isValidImageSource) {
@@ -999,15 +999,15 @@ export function EditorWorkspace() {
           <div className="workspace__property-list">
             {!aiConfigured ? (
               <p className="workspace__warning">
-                AI 配置未完成。请先设置 `VITE_AI_BASE_URL`、`VITE_AI_API_KEY` 和支持修复的模型。
+                AI 配置未完成。请先设置 `VITE_AI_BASE_URL`、`VITE_AI_API_KEY` 和支持调整的模型。
               </p>
             ) : null}
             <label className="workspace__property">
-              <span className="workspace__property-label">修复提示词</span>
+              <span className="workspace__property-label">调整提示词</span>
               <textarea
                 className="workspace__text-area"
                 onChange={(event) => updateRepairPrompt(selectedImageLayer.id, event.target.value)}
-                placeholder="描述您想要的局部修改，例如：移除水印、替换logo、修复破损边缘。"
+                placeholder="描述您想要的局部修改，例如：移除水印、替换logo、调整破损边缘。"
                 rows={4}
                 value={selectedImageLayer.aiMeta.repairPrompt}
               />
@@ -1034,7 +1034,7 @@ export function EditorWorkspace() {
                 onClick={() => void handleAiRepair()}
                 type="button"
               >
-                {aiBusy === "repair" || activeRepairSession?.isSubmitting ? "修复中..." : "执行修复"}
+                {aiBusy === "repair" || activeRepairSession?.isSubmitting ? "调整中..." : "执行调整"}
               </button>
             </div>
             <p className="workspace__footer-note">
@@ -1042,7 +1042,7 @@ export function EditorWorkspace() {
             </p>
             {repairTask.status !== "idle" ? (
               <p className="workspace__footer-note">
-                修复状态: {repairTask.status}
+                调整状态: {repairTask.status}
                 {repairTask.taskId ? ` (${repairTask.taskId})` : ""}
               </p>
             ) : null}
@@ -1963,21 +1963,30 @@ export function EditorWorkspace() {
             <section className="workspace__section">
               <h3>工具入口</h3>
               <div className="workspace__tool-stack">
-                {toolItemsAntd.filter((tool) => tool.id !== "hand" && tool.id !== "shape" && tool.id !== "text").map((tool) => (
-                  <button
-                    key={tool.id}
-                    aria-label={tool.label}
-                    className={`workspace__tool-button workspace__tool-button--compact ${activeTool === tool.id ? "is-active" : ""}`}
-                    onClick={() => handleToolClick(tool.id)}
-                    type="button"
-                  >
-                    <span className="workspace__tool-icon" aria-hidden="true">
-                      {tool.icon}
-                    </span>
-                    <strong>{tool.label}</strong>
-                    <Tooltip>{tool.hint}</Tooltip>
-                  </button>
-                ))}
+                {toolItemsAntd
+                  .filter((tool) => tool.id !== "hand" && tool.id !== "shape" && tool.id !== "text")
+                  .sort((left, right) => {
+                    const order: Record<string, number> = {
+                      ai3d: 1,
+                      repair: 2
+                    };
+                    return (order[left.id] ?? 0) - (order[right.id] ?? 0);
+                  })
+                  .map((tool) => (
+                    <button
+                      key={tool.id}
+                      aria-label={tool.label}
+                      className={`workspace__tool-button workspace__tool-button--compact ${activeTool === tool.id ? "is-active" : ""}`}
+                      onClick={() => handleToolClick(tool.id)}
+                      type="button"
+                    >
+                      <span className="workspace__tool-icon" aria-hidden="true">
+                        {tool.icon}
+                      </span>
+                      <strong>{tool.label}</strong>
+                      <Tooltip>{tool.hint}</Tooltip>
+                    </button>
+                  ))}
               </div>
             </section>
           ) : null}

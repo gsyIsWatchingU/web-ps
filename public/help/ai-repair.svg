@@ -8,8 +8,8 @@
   <path d="M836 314C858 274 904 246 952 246C1004 246 1048 280 1060 338C1068 376 1052 420 1020 446C996 466 964 474 934 470C878 462 830 420 824 360C822 344 826 328 836 314Z" fill="#FFD073"/>
   <path d="M290 250C324 274 352 310 378 344" stroke="#CD5C2D" stroke-width="26" stroke-linecap="round" stroke-dasharray="1 38"/>
   <path d="M346 414C372 386 404 354 432 322" stroke="#CD5C2D" stroke-width="26" stroke-linecap="round" stroke-dasharray="1 38"/>
-  <text x="142" y="104" fill="#1C2520" font-size="28" font-family="Arial, PingFang SC">修复前：涂抹出问题区域</text>
-  <text x="746" y="104" fill="#1C2520" font-size="28" font-family="Arial, PingFang SC">修复后：AI 自动补全画面</text>
+  <text x="142" y="104" fill="#1C2520" font-size="28" font-family="Arial, PingFang SC">调整前：涂抹出问题区域</text>
+  <text x="746" y="104" fill="#1C2520" font-size="28" font-family="Arial, PingFang SC">调整后：AI 自动补全画面</text>
   <path d="M552 360H648" stroke="#CD5C2D" stroke-width="10" stroke-linecap="round"/>
   <path d="M624 326L660 360L624 394" stroke="#CD5C2D" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

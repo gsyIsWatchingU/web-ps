@@ -1516,11 +1516,11 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     }
 
     if (!state.repairSession || state.repairSession.layerId !== layerId || !hasRepairMask(state.repairSession)) {
-      return { success: false, errorMessage: "请先在画布上框选需要修复的区域。" };
+      return { success: false, errorMessage: "请先在画布上框选需要调整的区域。" };
     }
 
     if (!layer.aiMeta.repairPrompt.trim()) {
-      return { success: false, errorMessage: "请输入修复提示词。" };
+      return { success: false, errorMessage: "请输入调整提示词。" };
     }
 
     set((current) => ({

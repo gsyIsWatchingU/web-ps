@@ -1,4 +1,4 @@
-# 修复计划：移除右侧边栏的水平滚动条
+# 调整计划：移除右侧边栏的水平滚动条
 
 ## 问题分析
 之前的修改对 `.workspace__column` 和 `.workspace__panel` 都应用了 `overflow: visible`，导致：

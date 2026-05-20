@@ -1,8 +1,8 @@
-# AI3D 替换圈选修复实施计划
+# AI3D 替换圈选调整实施计划
 
 ## Summary
 
-将现有“圈选蒙版修复”链路整体替换为 `AI3D` 单工具入口，接入火山引擎 `Doubao-Seed3D-2.0` 异步任务 API，产物以“任务状态 + 下载入口”形式呈现，不回写 2D 画布、不做站内 3D 预览。
+将现有“圈选蒙版调整”链路整体替换为 `AI3D` 单工具入口，接入火山引擎 `Doubao-Seed3D-2.0` 异步任务 API，产物以“任务状态 + 下载入口”形式呈现，不回写 2D 画布、不做站内 3D 预览。
 
 本次按纯前端架构实施：
 
@@ -17,13 +17,13 @@
 
 - `EditorTool` 精简为保留 `ai3d`，移除 `brush`、`eraser`、`repair` 的业务入口；`crop`、`doodle` 等其他工具维持现状。
 - [src/features/editor/components/EditorWorkspace.tsx](/E:/new-study/web-ps/src/features/editor/components/EditorWorkspace.tsx) 中：
-  - 删除与蒙版模式、蒙版按钮、修复执行按钮、蒙版预览、修复状态提示相关的 UI 和本地状态。
+  - 删除与蒙版模式、蒙版按钮、调整执行按钮、蒙版预览、调整状态提示相关的 UI 和本地状态。
   - 将右侧属性区替换为 `AI3D` 面板：参考图说明、提示词输入、开始生成按钮、任务状态、错误信息、下载链接/文件名。
   - 未选中图片图层时显示“请选择图片图层”；选中但图片 `source` 非 `http(s)` 时显示“当前图片无法用于 AI3D，首版仅支持可访问 URL 图层”。
 - [src/features/editor/components/CanvasViewport.tsx](/E:/new-study/web-ps/src/features/editor/components/CanvasViewport.tsx) 中：
   - 删除 `MaskSelectionMode`、`MaskDraft`、`onMaskStart/onMaskAppend/onMaskFinish`、蒙版绘制与预览逻辑。
   - 将直接交互工具判断从 `["brush","crop","doodle"]` 收敛为仅保留仍真实存在的交互工具，避免 AI3D 影响画布行为。
-  - 保留裁剪与涂鸦逻辑，不再处理任何圈选修复输入。
+  - 保留裁剪与涂鸦逻辑，不再处理任何圈选调整输入。
 
 ### 2. 数据模型与草稿兼容
 
@@ -75,7 +75,7 @@
   - `VITE_AI_API_KEY`
   - `VITE_AI_MODEL`，默认 `doubao-seed3d-2-0-260328`
   - `VITE_AI_TIMEOUT_MS`，默认保留现有超时量级
-- [src/features/editor/runtime/aiBridge.ts](/E:/new-study/web-ps/src/features/editor/runtime/aiBridge.ts) 从 DashScope 图片修复桥接重构为 Seed3D 任务桥接：
+- [src/features/editor/runtime/aiBridge.ts](/E:/new-study/web-ps/src/features/editor/runtime/aiBridge.ts) 从 DashScope 图片调整桥接重构为 Seed3D 任务桥接：
   - 暴露 `createSeed3dTask({ imageUrl, prompt })`
   - 暴露 `pollSeed3dTask(taskId)`
   - 可选暴露 `runSeed3dTask()` 供 store 一次性调用创建+轮询
@@ -117,7 +117,7 @@
 
 - [src/main.tsx](/E:/new-study/web-ps/src/main.tsx) 不再引入 `editor-repair-selection.css`；对应样式文件可删除或并入全局清理计划。
 - [src/features/editor/components/HelpCenter.tsx](/E:/new-study/web-ps/src/features/editor/components/HelpCenter.tsx)、[README.md](/E:/new-study/web-ps/README.md)、`public/help/*` 中：
-  - 替换“圈选修复 / 局部修复 / 擦除圈选 / 执行修复”为 `AI3D`
+  - 替换“圈选调整 / 局部调整 / 擦除圈选 / 执行调整”为 `AI3D`
   - 删除蒙版圈选步骤说明
   - 新增 AI3D 使用说明：选择参考图、填写提示词、发起生成、等待任务、下载模型
   - `public/help/ai-repair.svg` 替换为 AI3D 对应示意图，或改名后同步引用

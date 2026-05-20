@@ -13,7 +13,7 @@
   <text x="112" y="144" fill="#1C2520" font-size="28" font-family="Arial, PingFang SC">左侧：任务入口</text>
   <text x="112" y="184" fill="#59675F" font-size="20" font-family="Arial, PingFang SC">选择 / 平移 / 裁剪 / 涂抹 / 花字</text>
   <text x="420" y="144" fill="#1C2520" font-size="28" font-family="Arial, PingFang SC">中间：画布工作区</text>
-  <text x="420" y="184" fill="#59675F" font-size="20" font-family="Arial, PingFang SC">预览构图、拖拽图层、检查 AI 修复结果</text>
+  <text x="420" y="184" fill="#59675F" font-size="20" font-family="Arial, PingFang SC">预览构图、拖拽图层、检查 AI 调整结果</text>
   <text x="924" y="144" fill="#1C2520" font-size="28" font-family="Arial, PingFang SC">右侧：属性面板</text>
   <text x="924" y="184" fill="#59675F" font-size="20" font-family="Arial, PingFang SC">比例、裁剪、滤镜、AI 扩图、导出</text>
 </svg>
