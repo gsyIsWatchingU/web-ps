@@ -21,6 +21,7 @@ import { exportDocument } from "../runtime/exportDocument";
 import { renderPresetPreviewDataUrl } from "../runtime/lutEngine";
 import { useEditorStore } from "../store/useEditorStore";
 import { CanvasViewport } from "./CanvasViewport";
+import { ModelPreviewDialog } from "./ModelPreviewDialog";
 import { useMessage } from "../../../shared/message";
 
 const EXPORT_STATE_EVENT = "editor:export-state";
@@ -195,7 +196,7 @@ function getScaledDimensions(canvasWidth: number, canvasHeight: number, scalePer
   };
 }
 
-const IMAGE_REQUIRED_TOOLS: ToolId[] = ["crop", "filter", "ai3d"];
+const IMAGE_REQUIRED_TOOLS: ToolId[] = ["crop", "filter", "repair", "ai3d"];
 const FILTER_PREVIEW_SOURCE = "/help/filter-preview-sample.svg";
 
 function buildPersistedDraft(document: EditorDocument, savedAt: string): EditorDocument {
@@ -297,6 +298,18 @@ const toolItemsAntd = [
     )
   },
   {
+    id: "repair",
+    label: "AI Repair",
+    hint: "Paint a local mask and let AI rewrite only that region.",
+    icon: (
+      <IconBase>
+        <path d="M6 17 17 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <path d="m14 5 1.5-1.5a2.12 2.12 0 1 1 3 3L17 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="m5 14 5 5-6 1 1-6Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      </IconBase>
+    )
+  },
+  {
     id: "text",
     label: "文字",
     hint: "添加标题、价格和卖点文案",
@@ -354,17 +367,22 @@ export function EditorWorkspace() {
   const [lastExportedFilename, setLastExportedFilename] = useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
+  const [isModelPreviewOpen, setIsModelPreviewOpen] = useState(false);
+  const [previewModelUrl, setPreviewModelUrl] = useState<string>("");
+  const [previewFileName, setPreviewFileName] = useState<string>("");
   const [doodleStyle, setDoodleStyle] = useState(createDefaultDoodleStyle);
   const [filterPreviewSources, setFilterPreviewSources] = useState<
     Record<(typeof imageFilterPresets)[number]["id"], string>
   >({} as Record<(typeof imageFilterPresets)[number]["id"], string>);
-  const [customImageUrl, setCustomImageUrl] = useState("");
   const {
     activeTool,
     cropSession,
+    repairSession,
     addDecorationLayer,
     addDoodleLayer,
     addTextLayer,
+    appendRepairStroke,
+    applyAiRepair,
     applyAi3d,
     applyEnhanceProfile,
     applyImagePreset,
@@ -389,15 +407,19 @@ export function EditorWorkspace() {
     setCanvasPreset,
     setCanvasDisplayBackground,
     setCanvasViewport,
+    setRepairBrushSize,
     setImageCropAspect,
     setSelectedLayerIds,
+    startRepairSession,
     startCropSession,
     toggleLayerLock,
     toggleLayerVisibility,
+    clearRepairSession,
     cancelCropSession,
     undo,
     updateAiExpandPrompt,
     updateAiPrompt,
+    updateRepairPrompt,
     updateCropSession,
     updateDecorationKind,
     updateDecorationFill,
@@ -432,6 +454,10 @@ export function EditorWorkspace() {
     cropSession && selectedImageLayer && cropSession.layerId === selectedImageLayer.id
       ? cropSession.draft
       : selectedImageLayer?.crop ?? null;
+  const activeRepairSession =
+    repairSession && selectedImageLayer && repairSession.layerId === selectedImageLayer.id
+      ? repairSession
+      : null;
   const isFixedSizePreset =
     document.exportConfig.sizePreset === "1inch" || document.exportConfig.sizePreset === "2inch";
   const isAspectLocked = document.exportConfig.sizePreset === "group";
@@ -442,6 +468,7 @@ export function EditorWorkspace() {
   );
   const showCropProperties = activeTool === "crop" && selectedImageLayer !== null;
   const activeToolNeedsImageLayer = IMAGE_REQUIRED_TOOLS.includes(activeTool);
+  const hasRepairMask = Boolean(activeRepairSession?.strokes.some((stroke) => stroke.points.length > 1));
 
   useEffect(() => {
     let cancelled = false;
@@ -523,6 +550,14 @@ export function EditorWorkspace() {
       }
     }
   }, [activeTool, cropSession, selectedImageLayer, startCropSession]);
+
+  useEffect(() => {
+    if (activeTool === "repair" && selectedImageLayer) {
+      if (!repairSession || repairSession.layerId !== selectedImageLayer.id) {
+        startRepairSession(selectedImageLayer.id);
+      }
+    }
+  }, [activeTool, repairSession, selectedImageLayer, startRepairSession]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -618,7 +653,7 @@ export function EditorWorkspace() {
     setFeedbackMessage("画布已清空。");
   };
 
-  const handleAi3d = async (customImageUrl?: string) => {
+  const handleAi3d = async () => {
     if (!requireSelectedImageLayer("ai3d")) {
       return;
     }
@@ -629,9 +664,7 @@ export function EditorWorkspace() {
       return;
     }
 
-    const targetUrl = customImageUrl && (customImageUrl.startsWith("http://") || customImageUrl.startsWith("https://"))
-      ? customImageUrl
-      : imageLayer.source;
+    const targetUrl = imageLayer.source;
 
     const isValidImageSource = 
       targetUrl.startsWith("http://") || 
@@ -654,6 +687,34 @@ export function EditorWorkspace() {
       } else {
         setFeedbackMessage(result.errorMessage ?? "AI3D 生成失败。");
       }
+    } finally {
+      setAiBusy(null);
+    }
+  };
+
+  const handleAiRepair = async () => {
+    if (!requireSelectedImageLayer("repair")) {
+      return;
+    }
+
+    const imageLayer = selectedImageLayer;
+
+    if (!imageLayer) {
+      return;
+    }
+
+    setAiBusy("repair");
+    setFeedbackMessage(null);
+
+    try {
+      const result = await applyAiRepair(imageLayer.id);
+
+      if (result.success) {
+        setFeedbackMessage("AI repair completed and replaced the selected image.");
+        return;
+      }
+
+      setFeedbackMessage(result.errorMessage ?? "AI repair failed.");
     } finally {
       setAiBusy(null);
     }
@@ -710,6 +771,10 @@ export function EditorWorkspace() {
 
   const handleDoodleCommit = (points: Parameters<typeof addDoodleLayer>[0]) => {
     addDoodleLayer(points, doodleStyle);
+  };
+
+  const handleRepairStrokeCommit = (points: Parameters<typeof appendRepairStroke>[0]) => {
+    appendRepairStroke(points);
   };
 
   const handleExportSizePresetChange = (preset: ExportSizePreset) => {
@@ -927,6 +992,79 @@ export function EditorWorkspace() {
 
       const lastAiError = selectedImageLayer.aiMeta.lastAiError;
 
+      if (activeTool === "repair") {
+        const repairTask = selectedImageLayer.aiMeta.repairTask;
+
+        return (
+          <div className="workspace__property-list">
+            {!aiConfigured ? (
+              <p className="workspace__warning">
+                AI is not configured yet. Set `VITE_AI_BASE_URL`, `VITE_AI_API_KEY`, and a repair-capable model before using local repair.
+              </p>
+            ) : null}
+            <label className="workspace__property">
+              <span className="workspace__property-label">Repair prompt</span>
+              <textarea
+                className="workspace__text-area"
+                onChange={(event) => updateRepairPrompt(selectedImageLayer.id, event.target.value)}
+                placeholder="Describe only the local change you want, for example: remove the watermark, replace the logo, fix the torn edge."
+                rows={4}
+                value={selectedImageLayer.aiMeta.repairPrompt}
+              />
+            </label>
+            <label className="workspace__property">
+              <span className="workspace__property-label">Brush size</span>
+              <input
+                className="workspace__range"
+                max={120}
+                min={4}
+                onChange={(event) => setRepairBrushSize(Number(event.target.value))}
+                step={1}
+                type="range"
+                value={activeRepairSession?.brushSize ?? 36}
+              />
+              <div className="workspace__property-value">{activeRepairSession?.brushSize ?? 36}px</div>
+            </label>
+            <div className="workspace__inline-actions">
+              <button
+                className="workspace__action-button"
+                disabled={!activeRepairSession || activeRepairSession.isSubmitting || !hasRepairMask}
+                onClick={() => clearRepairSession()}
+                type="button"
+              >
+                Clear mask
+              </button>
+              <button
+                className="workspace__action-button"
+                disabled={
+                  aiBusy !== null ||
+                  !aiConfigured ||
+                  !activeRepairSession ||
+                  activeRepairSession.isSubmitting ||
+                  !hasRepairMask ||
+                  !selectedImageLayer.aiMeta.repairPrompt.trim()
+                }
+                onClick={() => void handleAiRepair()}
+                type="button"
+              >
+                {aiBusy === "repair" || activeRepairSession?.isSubmitting ? "Repairing..." : "Run repair"}
+              </button>
+            </div>
+            <p className="workspace__footer-note">
+              Paint the area to change, then describe the edit in the prompt. The rest of the image stays as context for the model.
+            </p>
+            {repairTask.status !== "idle" ? (
+              <p className="workspace__footer-note">
+                Repair status: {repairTask.status}
+                {repairTask.taskId ? ` (${repairTask.taskId})` : ""}
+              </p>
+            ) : null}
+            {repairTask.errorMessage ? <p className="workspace__warning">{repairTask.errorMessage}</p> : null}
+            {lastAiError && !repairTask.errorMessage ? <p className="workspace__warning">{lastAiError}</p> : null}
+          </div>
+        );
+      }
+
       if (activeTool === "crop") {
         return (
           <div className="workspace__property-list">
@@ -1029,8 +1167,7 @@ export function EditorWorkspace() {
       if (activeTool === "ai3d") {
         const isUrlImage = selectedImageLayer.source.startsWith("http://") || selectedImageLayer.source.startsWith("https://");
         const isBase64Image = selectedImageLayer.source.startsWith("data:image/");
-        const hasCustomUrl = customImageUrl && (customImageUrl.startsWith("http://") || customImageUrl.startsWith("https://"));
-        const canGenerate = isUrlImage || isBase64Image || hasCustomUrl;
+        const canGenerate = isUrlImage || isBase64Image;
         const task = selectedImageLayer.aiMeta.model3dTask;
         return (
           <div className="workspace__property-list">
@@ -1045,25 +1182,6 @@ export function EditorWorkspace() {
                 </p>
               ) : null}
               <label className="workspace__property workspace__property--inner">
-                <span className="workspace__property-label">图片 URL（可选）</span>
-                <input
-                  className="workspace__text-input"
-                  type="url"
-                  onChange={(event) => setCustomImageUrl(event.target.value)}
-                  value={customImageUrl}
-                  placeholder="输入可访问的网络图片 URL..."
-                />
-                {isUrlImage ? (
-                  <p className="workspace__footer-note">
-                    当前图层图片: {selectedImageLayer.source.length > 50 ? selectedImageLayer.source.substring(0, 50) + "..." : selectedImageLayer.source}
-                  </p>
-                ) : isBase64Image ? (
-                  <p className="workspace__footer-note">
-                    当前图层图片: 本地上传图片
-                  </p>
-                ) : null}
-              </label>
-              <label className="workspace__property workspace__property--inner">
                 <span className="workspace__property-label">生成提示词</span>
                 <textarea
                   className="workspace__text-area"
@@ -1077,7 +1195,7 @@ export function EditorWorkspace() {
                 <button
                   className="workspace__action-button"
                   disabled={aiBusy !== null || !aiConfigured || !canGenerate}
-                  onClick={() => void handleAi3d(customImageUrl)}
+                  onClick={() => void handleAi3d()}
                   type="button"
                 >
                   {aiBusy === "ai3d" ? "生成中..." : "生成 3D 模型"}
@@ -1098,6 +1216,17 @@ export function EditorWorkspace() {
                   >
                     下载模型 ({task.fileName})
                   </a>
+                  <button
+                    className="workspace__action-button"
+                    onClick={() => {
+                      setPreviewModelUrl(task.downloadUrl!);
+                      setPreviewFileName(task.fileName || "model.glb");
+                      setIsModelPreviewOpen(true);
+                    }}
+                    type="button"
+                  >
+                    在线预览
+                  </button>
                 </div>
               ) : null}
               {lastAiError ? (
@@ -1952,10 +2081,10 @@ export function EditorWorkspace() {
                 撤销
               </button>
               <button className="workspace__tool-button workspace__tool-button--overlay-label" data-label="重做" disabled={!canRedo} onClick={redo} type="button">
-                é‡åš
+                重做
               </button>
               <button className="workspace__tool-button workspace__tool-button--overlay-label" data-label="清空" onClick={handleClearCanvas} type="button">
-                重做
+                清空
               </button>
               <button className="workspace__tool-button" onClick={handleImportClick} type="button">
                 导入图片
@@ -1976,10 +2105,12 @@ export function EditorWorkspace() {
             onCropSessionChange={updateCropSession}
             doodleStyle={doodleStyle}
             onDoodleCommit={handleDoodleCommit}
+            onRepairStrokeCommit={handleRepairStrokeCommit}
             onSelectionChange={setSelectedLayerIds}
             onTextChange={updateTextContent}
             onTransformChange={updateLayerTransform}
             onViewportChange={setCanvasViewport}
+            repairSession={repairSession}
             selectedImageLayer={selectedImageLayer}
             selectedLayerIds={selectedLayerIds}
           />
@@ -2253,6 +2384,13 @@ export function EditorWorkspace() {
           </div>
         </div>
       ) : null}
+
+      <ModelPreviewDialog
+        modelUrl={previewModelUrl}
+        fileName={previewFileName}
+        isOpen={isModelPreviewOpen}
+        onClose={() => setIsModelPreviewOpen(false)}
+      />
     </div>
   );
 }

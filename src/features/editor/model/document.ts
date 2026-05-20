@@ -37,7 +37,7 @@ export const canvasPresets = [
 ] as const;
 
 export const layerTypes = ["image", "text", "decoration", "doodle"] as const;
-export const textTemplateIds = ["title", "price", "coupon", "highlight"] as const;
+export const textTemplateIds = ["title", "price", "coupon", "highlight", "flash", "new", "hot", "free", "gift", "digital"] as const;
 export const imagePresetFilterIds = [
   "beauty",
   "food",
@@ -59,6 +59,7 @@ export const editorToolIds = [
   "select",
   "crop",
   "doodle",
+  "repair",
   "ai3d",
   "text",
   "filter",
@@ -121,6 +122,11 @@ export type DoodlePoint = {
   y: number;
 };
 
+export type RepairStroke = {
+  points: DoodlePoint[];
+  brushSize: number;
+};
+
 export type Model3dTaskStatus = "idle" | "pending" | "running" | "succeeded" | "failed";
 
 export type Model3dTaskMeta = {
@@ -134,11 +140,19 @@ export type Model3dTaskMeta = {
 export type ImageAiMeta = {
   prompt: string;
   expandPrompt: string;
-  lastAiAction: "seed3d" | "outpaint" | null;
+  repairPrompt: string;
+  lastAiAction: "seed3d" | "outpaint" | "repair" | null;
   lastAiRequestedAt: string | null;
   lastAiSucceededAt: string | null;
   lastAiError: string | null;
   model3dTask: Model3dTaskMeta;
+  repairTask: {
+    taskId: string | null;
+    status: "idle" | "pending" | "running" | "succeeded" | "failed";
+    resultUrl: string | null;
+    providerModel: string | null;
+    errorMessage: string | null;
+  };
 };
 
 export type ImageLayer = LayerBase & {
@@ -326,6 +340,102 @@ export const textTemplatePresets: Array<{
       strokeWidth: 2,
       backgroundColor: "#a7f0cb",
       gradient: ["#d9ff8c", "#86e1b4"]
+    }
+  },
+  {
+    id: "flash",
+    label: "秒杀闪购",
+    content: "限时秒杀",
+    name: "秒杀闪购",
+    style: {
+      fontSize: 64,
+      fontWeight: 800,
+      fill: "#ffffff",
+      stroke: "#d00f00",
+      strokeWidth: 5,
+      shadow: "0 16px 32px rgba(208, 15, 0, 0.3)",
+      backgroundColor: "#ff4d4d",
+      gradient: ["#ff8080", "#ff0000"]
+    }
+  },
+  {
+    id: "new",
+    label: "新品推荐",
+    content: "新品上市",
+    name: "新品推荐",
+    style: {
+      fontSize: 60,
+      fontWeight: 800,
+      fill: "#ffffff",
+      stroke: "#1a5f4a",
+      strokeWidth: 4,
+      shadow: "0 14px 28px rgba(26, 95, 74, 0.2)",
+      backgroundColor: "#00c875",
+      gradient: ["#50ffb3", "#00c875"]
+    }
+  },
+  {
+    id: "hot",
+    label: "热销爆款",
+    content: "热销爆款",
+    name: "热销爆款",
+    style: {
+      fontSize: 66,
+      fontWeight: 800,
+      fill: "#fff5e6",
+      stroke: "#8b4500",
+      strokeWidth: 6,
+      shadow: "0 18px 30px rgba(139, 69, 0, 0.25)",
+      backgroundColor: "#ff9d4d",
+      gradient: ["#ffcc80", "#ff6600"]
+    }
+  },
+  {
+    id: "free",
+    label: "包邮特惠",
+    content: "全场包邮",
+    name: "包邮特惠",
+    style: {
+      fontSize: 56,
+      fontWeight: 700,
+      fill: "#ffffff",
+      stroke: "#2d5f8b",
+      strokeWidth: 4,
+      shadow: "0 14px 26px rgba(45, 95, 139, 0.2)",
+      backgroundColor: "#5dade2",
+      gradient: ["#85c1e9", "#3498db"]
+    }
+  },
+  {
+    id: "gift",
+    label: "赠品专属",
+    content: "满赠好礼",
+    name: "赠品专属",
+    style: {
+      fontSize: 52,
+      fontWeight: 700,
+      fill: "#fff0f5",
+      stroke: "#8b1455",
+      strokeWidth: 4,
+      shadow: "0 14px 26px rgba(139, 20, 85, 0.2)",
+      backgroundColor: "#ff85a2",
+      gradient: ["#ffb6c1", "#ff69b4"]
+    }
+  },
+  {
+    id: "digital",
+    label: "数码科技",
+    content: "科技生活",
+    name: "数码科技",
+    style: {
+      fontSize: 58,
+      fontWeight: 700,
+      fill: "#e6f4ff",
+      stroke: "#004080",
+      strokeWidth: 4,
+      shadow: "0 14px 26px rgba(0, 64, 128, 0.2)",
+      backgroundColor: "#4da6ff",
+      gradient: ["#80bfff", "#0066cc"]
     }
   }
 ];
@@ -649,6 +759,7 @@ export function createDefaultImageAiMeta(): ImageAiMeta {
   return {
     prompt: "生成高质量3D模型。",
     expandPrompt: "在延展画面的同时保持主体位置、背景氛围和整体光线一致。",
+    repairPrompt: "",
     lastAiAction: null,
     lastAiRequestedAt: null,
     lastAiSucceededAt: null,
@@ -659,6 +770,13 @@ export function createDefaultImageAiMeta(): ImageAiMeta {
       downloadUrl: null,
       fileName: null,
       providerModel: null
+    },
+    repairTask: {
+      taskId: null,
+      status: "idle",
+      resultUrl: null,
+      providerModel: null,
+      errorMessage: null
     }
   };
 }

@@ -7,7 +7,8 @@ import type {
   EditorDocument,
   EditorTool,
   ImageCrop,
-  ImageLayer
+  ImageLayer,
+  RepairStroke
 } from "../model/document";
 import { getDefaultSafeAreaInset } from "../model/document";
 import { seedCanvas } from "../runtime/seedCanvas";
@@ -17,9 +18,18 @@ type CropSession = {
   draft: ImageCrop;
 } | null;
 
+type RepairSession = {
+  layerId: string;
+  strokes: RepairStroke[];
+  brushSize: number;
+  feather: number;
+  isSubmitting: boolean;
+} | null;
+
 type CanvasViewportProps = {
   activeTool: EditorTool;
   cropSession: CropSession;
+  repairSession: RepairSession;
   document: EditorDocument;
   selectedImageLayer: ImageLayer | null;
   selectedLayerIds: string[];
@@ -40,6 +50,7 @@ type CanvasViewportProps = {
   onViewportChange: (viewport: Partial<EditorDocument["canvas"]["viewport"]>) => void;
   doodleStyle: Pick<DoodleLayer, "stroke" | "strokeWidth">;
   onDoodleCommit: (points: DoodlePoint[]) => void;
+  onRepairStrokeCommit: (points: DoodlePoint[]) => void;
   onCropSessionChange: (crop: Partial<ImageCrop>) => void;
 };
 
@@ -75,7 +86,7 @@ function clampZoom(zoom: number) {
 }
 
 function isDirectManipulationTool(activeTool: EditorTool) {
-  return ["crop", "doodle"].includes(activeTool);
+  return ["crop", "doodle", "repair"].includes(activeTool);
 }
 
 function resolveCanvasCursor(activeTool: EditorTool, isPanning: boolean) {
@@ -284,6 +295,47 @@ function drawCropOverlay(
   context.restore();
 }
 
+function drawRepairOverlay(
+  context: CanvasRenderingContext2D,
+  layer: ImageLayer,
+  strokes: RepairStroke[],
+  livePoints: DoodlePoint[],
+  brushSize: number,
+  viewport: EditorDocument["canvas"]["viewport"]
+) {
+  const visibleWidth = layer.crop.width * layer.transform.scaleX;
+  const visibleHeight = layer.crop.height * layer.transform.scaleY;
+
+  context.save();
+  context.setTransform(viewport.zoom, 0, 0, viewport.zoom, viewport.panX, viewport.panY);
+  context.fillStyle = "rgba(210, 68, 50, 0.08)";
+  context.fillRect(layer.transform.x, layer.transform.y, visibleWidth, visibleHeight);
+  context.strokeStyle = "rgba(214, 72, 56, 0.92)";
+  context.lineCap = "round";
+  context.lineJoin = "round";
+
+  const drawStroke = (points: DoodlePoint[], width: number) => {
+    if (points.length < 2) {
+      return;
+    }
+
+    context.beginPath();
+    context.lineWidth = width;
+    points.forEach((point, index) => {
+      if (index === 0) {
+        context.moveTo(point.x, point.y);
+      } else {
+        context.lineTo(point.x, point.y);
+      }
+    });
+    context.stroke();
+  };
+
+  strokes.forEach((stroke) => drawStroke(stroke.points, stroke.brushSize));
+  drawStroke(livePoints, brushSize);
+  context.restore();
+}
+
 function drawSafeAreaOverlay(
   context: CanvasRenderingContext2D,
   document: EditorDocument,
@@ -330,6 +382,7 @@ function drawSafeAreaOverlay(
 export function CanvasViewport({
   activeTool,
   cropSession,
+  repairSession,
   doodleStyle,
   document,
   selectedImageLayer,
@@ -339,6 +392,7 @@ export function CanvasViewport({
   onTransformChange,
   onViewportChange,
   onDoodleCommit,
+  onRepairStrokeCommit,
   onCropSessionChange
 }: CanvasViewportProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -349,14 +403,16 @@ export function CanvasViewport({
   const documentRef = useRef(document);
   const selectedImageLayerRef = useRef(selectedImageLayer);
   const cropSessionRef = useRef(cropSession);
+  const repairSessionRef = useRef(repairSession);
   const onSelectionChangeRef = useRef(onSelectionChange);
   const onTextChangeRef = useRef(onTextChange);
   const onTransformChangeRef = useRef(onTransformChange);
   const onViewportChangeRef = useRef(onViewportChange);
   const onDoodleCommitRef = useRef(onDoodleCommit);
+  const onRepairStrokeCommitRef = useRef(onRepairStrokeCommit);
   const onCropSessionChangeRef = useRef(onCropSessionChange);
   const panSessionRef = useRef({ isPanning: false, lastX: 0, lastY: 0 });
-  const drawSessionRef = useRef({ mode: null as "doodle" | "crop" | null });
+  const drawSessionRef = useRef({ mode: null as "doodle" | "crop" | "repair" | null });
   const doodlePointsRef = useRef<DoodlePoint[]>([]);
   const cropDragRef = useRef<{ handle: CropHandle; startPoint: DoodlePoint; startCrop: ImageCrop | null }>({
     handle: null,
@@ -369,7 +425,7 @@ export function CanvasViewport({
     ...getCanvasSurfaceStyle(document)
   };
 
-  const renderOverlay = () => {
+  const renderOverlay = (viewport?: EditorDocument["canvas"]["viewport"]) => {
     const overlay = overlayRef.current;
 
     if (!overlay) {
@@ -382,11 +438,29 @@ export function CanvasViewport({
       return;
     }
 
+    const effectiveViewport = viewport ?? documentRef.current.canvas.viewport;
+
     context.clearRect(0, 0, overlay.width, overlay.height);
-    drawSafeAreaOverlay(context, documentRef.current, documentRef.current.canvas.viewport);
+    drawSafeAreaOverlay(context, documentRef.current, effectiveViewport);
 
     if (activeToolRef.current === "doodle") {
-      drawDoodlePreview(context, doodlePointsRef.current, documentRef.current.canvas.viewport, doodleStyle);
+      drawDoodlePreview(context, doodlePointsRef.current, effectiveViewport, doodleStyle);
+    }
+
+    if (
+      activeToolRef.current === "repair" &&
+      repairSessionRef.current &&
+      selectedImageLayerRef.current &&
+      repairSessionRef.current.layerId === selectedImageLayerRef.current.id
+    ) {
+      drawRepairOverlay(
+        context,
+        selectedImageLayerRef.current,
+        repairSessionRef.current.strokes,
+        doodlePointsRef.current,
+        repairSessionRef.current.brushSize,
+        effectiveViewport
+      );
     }
 
     if (
@@ -395,7 +469,7 @@ export function CanvasViewport({
       selectedImageLayerRef.current &&
       cropSessionRef.current.layerId === selectedImageLayerRef.current.id
     ) {
-      drawCropOverlay(context, selectedImageLayerRef.current, cropSessionRef.current.draft, documentRef.current.canvas.viewport);
+      drawCropOverlay(context, selectedImageLayerRef.current, cropSessionRef.current.draft, effectiveViewport);
     }
   };
 
@@ -404,16 +478,19 @@ export function CanvasViewport({
     documentRef.current = document;
     selectedImageLayerRef.current = selectedImageLayer;
     cropSessionRef.current = cropSession;
+    repairSessionRef.current = repairSession;
     onSelectionChangeRef.current = onSelectionChange;
     onTextChangeRef.current = onTextChange;
     onTransformChangeRef.current = onTransformChange;
     onViewportChangeRef.current = onViewportChange;
     onDoodleCommitRef.current = onDoodleCommit;
+    onRepairStrokeCommitRef.current = onRepairStrokeCommit;
     onCropSessionChangeRef.current = onCropSessionChange;
     renderOverlay();
   }, [
     activeTool,
     cropSession,
+    repairSession,
     document,
     onCropSessionChange,
     onDoodleCommit,
@@ -441,7 +518,7 @@ export function CanvasViewport({
     applyViewport(runtime, document.canvas.viewport.zoom, document.canvas.viewport.panX, document.canvas.viewport.panY);
 
     const syncSelection = () => {
-      if (suppressSyncRef.current || ["crop", "doodle"].includes(activeToolRef.current)) {
+      if (suppressSyncRef.current || ["crop", "doodle", "repair"].includes(activeToolRef.current)) {
         return;
       }
 
@@ -512,6 +589,19 @@ export function CanvasViewport({
       }
 
       if (
+        currentTool === "repair" &&
+        currentSelectedImageLayer &&
+        repairSessionRef.current &&
+        repairSessionRef.current.layerId === currentSelectedImageLayer.id &&
+        !repairSessionRef.current.isSubmitting
+      ) {
+        drawSessionRef.current.mode = "repair";
+        doodlePointsRef.current = [docPoint];
+        renderOverlay();
+        return;
+      }
+
+      if (
         currentTool === "crop" &&
         currentSelectedImageLayer &&
         cropSessionRef.current &&
@@ -547,15 +637,22 @@ export function CanvasViewport({
         const viewportTransform = runtime.viewportTransform ?? [1, 0, 0, 1, 0, 0];
         const nextPanX = (viewportTransform[4] ?? 0) + deltaX;
         const nextPanY = (viewportTransform[5] ?? 0) + deltaY;
+        const nextZoom = viewportTransform[0] ?? 1;
 
         panSessionRef.current.lastX = pointer.x;
         panSessionRef.current.lastY = pointer.y;
-        applyViewport(runtime, viewportTransform[0] ?? 1, nextPanX, nextPanY);
-        renderOverlay();
+        applyViewport(runtime, nextZoom, nextPanX, nextPanY);
+        renderOverlay({ zoom: nextZoom, panX: nextPanX, panY: nextPanY });
         return;
       }
 
       if (drawSessionRef.current.mode === "doodle" && currentTool === "doodle") {
+        doodlePointsRef.current = [...doodlePointsRef.current, docPoint];
+        renderOverlay();
+        return;
+      }
+
+      if (drawSessionRef.current.mode === "repair" && currentTool === "repair") {
         doodlePointsRef.current = [...doodlePointsRef.current, docPoint];
         renderOverlay();
         return;
@@ -628,6 +725,10 @@ export function CanvasViewport({
 
       if (drawSessionRef.current.mode === "doodle" && doodlePointsRef.current.length > 1) {
         onDoodleCommitRef.current(doodlePointsRef.current);
+      }
+
+      if (drawSessionRef.current.mode === "repair" && doodlePointsRef.current.length > 1) {
+        onRepairStrokeCommitRef.current(doodlePointsRef.current);
       }
 
       drawSessionRef.current.mode = null;
@@ -712,7 +813,7 @@ export function CanvasViewport({
       cancelled = true;
       suppressSyncRef.current = false;
     };
-  }, [cropSession, document, doodleStyle, selectedLayerIds]);
+  }, [cropSession, document, doodleStyle, repairSession, selectedLayerIds]);
 
   return (
     <div className="workspace__viewport-shell">
@@ -722,7 +823,7 @@ export function CanvasViewport({
             <canvas ref={canvasRef} className="workspace__canvas" height={document.canvas.height} width={document.canvas.width} />
             <canvas
               ref={overlayRef}
-              className={`workspace__mask-overlay ${["doodle", "crop"].includes(activeTool) ? "workspace__mask-overlay--interactive" : ""}`}
+              className={`workspace__mask-overlay ${["doodle", "crop", "repair"].includes(activeTool) ? "workspace__mask-overlay--interactive" : ""}`}
               height={document.canvas.height}
               width={document.canvas.width}
             />

@@ -32,11 +32,18 @@ import {
   type ImageLayer,
   type ImagePresetFilterId,
   type LayerTransform,
+  type RepairStroke,
   type TextLayer,
   type TextTemplateId
 } from "../model/document";
 import { editorDocumentSchema } from "../model/document.schema";
 import { runSeed3dTask } from "../runtime/aiBridge";
+import {
+  getImageSizeFromSource,
+  renderImageLayerCropDataUrl,
+  renderRepairMaskDataUrl,
+  runImageRepairTask
+} from "../runtime/imageEditBridge";
 
 type LayerOrderDirection = "up" | "down";
 type AlignmentAxis = "horizontal" | "vertical";
@@ -55,11 +62,20 @@ type CropSession = {
   draft: ImageCrop;
 } | null;
 
+type RepairSession = {
+  layerId: string;
+  strokes: RepairStroke[];
+  brushSize: number;
+  feather: number;
+  isSubmitting: boolean;
+} | null;
+
 type EditorStore = {
   activeTool: EditorTool;
   selectedLayerIds: string[];
   document: EditorDocument;
   cropSession: CropSession;
+  repairSession: RepairSession;
   historyPast: HistoryEntry[];
   historyFuture: HistoryEntry[];
   setActiveTool: (tool: EditorTool) => void;
@@ -116,10 +132,16 @@ type EditorStore = {
   markWorkflowApplied: () => void;
   updateAiPrompt: (layerId: string, prompt: string) => void;
   updateAiExpandPrompt: (layerId: string, prompt: string) => void;
+  updateRepairPrompt: (layerId: string, prompt: string) => void;
   startCropSession: (layerId: string) => void;
   updateCropSession: (crop: Partial<ImageCrop>) => void;
   commitCropSession: () => void;
   cancelCropSession: () => void;
+  startRepairSession: (layerId: string) => void;
+  appendRepairStroke: (points: RepairStroke["points"]) => void;
+  clearRepairSession: () => void;
+  setRepairBrushSize: (size: number) => void;
+  applyAiRepair: (layerId: string) => Promise<AsyncResult>;
   applyAi3d: (layerId: string, customUrl?: string) => Promise<AsyncResult>;
   clearCanvas: () => void;
   undo: () => void;
@@ -427,6 +449,14 @@ function sanitizeDecorationSize(size: Partial<Pick<DecorationLayer, "width" | "h
   };
 }
 
+function clampRepairBrushSize(size: number) {
+  return clamp(Math.round(size), 4, 160);
+}
+
+function hasRepairMask(session: RepairSession) {
+  return Boolean(session?.strokes.some((stroke) => stroke.points.length > 1));
+}
+
 function createDoodleLayer(
   points: DoodlePoint[],
   zIndex: number,
@@ -553,12 +583,14 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   ),
   document: initialDocument,
   cropSession: null,
+  repairSession: null,
   historyPast: [],
   historyFuture: [],
   setActiveTool: (tool) =>
     set((state) => ({
       activeTool: tool,
-      cropSession: tool === "crop" ? state.cropSession : null
+      cropSession: tool === "crop" ? state.cropSession : null,
+      repairSession: tool === "repair" ? state.repairSession : null
     })),
   setCanvasPreset: (presetId) =>
     set((state) => {
@@ -1302,6 +1334,25 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         )
       )
     ),
+  updateRepairPrompt: (layerId, prompt) =>
+    set((state) =>
+      commitDocumentChange(
+        state,
+        updateLayers(state.document, (layers) =>
+          layers.map((layer) =>
+            layer.id === layerId && layer.type === "image"
+              ? {
+                  ...layer,
+                  aiMeta: {
+                    ...layer.aiMeta,
+                    repairPrompt: prompt
+                  }
+                }
+              : layer
+          )
+        )
+      )
+    ),
   
   startCropSession: (layerId) =>
     set((state) => {
@@ -1379,6 +1430,249 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       cropSession: null,
       activeTool: "select"
     })),
+  startRepairSession: (layerId) =>
+    set((state) => {
+      const layer = state.document.layers.find(
+        (entry): entry is ImageLayer => entry.id === layerId && entry.type === "image"
+      );
+
+      if (!layer) {
+        return {
+          repairSession: null
+        };
+      }
+
+      return {
+        repairSession: {
+          layerId,
+          strokes: [],
+          brushSize: state.repairSession?.layerId === layerId ? state.repairSession.brushSize : 36,
+          feather: 0,
+          isSubmitting: false
+        }
+      };
+    }),
+  appendRepairStroke: (points) =>
+    set((state) => {
+      if (!state.repairSession || points.length < 2) {
+        return state;
+      }
+
+      return {
+        repairSession: {
+          ...state.repairSession,
+          strokes: [
+            ...state.repairSession.strokes,
+            {
+              points,
+              brushSize: state.repairSession.brushSize
+            }
+          ]
+        }
+      };
+    }),
+  clearRepairSession: () =>
+    set((state) => {
+      if (!state.repairSession) {
+        return state;
+      }
+
+      return {
+        repairSession: {
+          ...state.repairSession,
+          strokes: [],
+          isSubmitting: false
+        }
+      };
+    }),
+  setRepairBrushSize: (size) =>
+    set((state) => {
+      if (!state.repairSession) {
+        return state;
+      }
+
+      return {
+        repairSession: {
+          ...state.repairSession,
+          brushSize: clampRepairBrushSize(size)
+        }
+      };
+    }),
+  applyAiRepair: async (layerId) => {
+    const state = get();
+    const layer = state.document.layers.find(
+      (entry): entry is ImageLayer => entry.id === layerId && entry.type === "image"
+    );
+
+    if (!layer) {
+      return { success: false, errorMessage: "Please select an image layer first." };
+    }
+
+    if (layer.transform.rotation !== 0 || layer.transform.flipX || layer.transform.flipY) {
+      return {
+        success: false,
+        errorMessage: "AI repair currently supports only unrotated, non-flipped image layers."
+      };
+    }
+
+    if (!state.repairSession || state.repairSession.layerId !== layerId || !hasRepairMask(state.repairSession)) {
+      return { success: false, errorMessage: "Please paint a repair mask before submitting." };
+    }
+
+    if (!layer.aiMeta.repairPrompt.trim()) {
+      return { success: false, errorMessage: "Please enter a repair prompt." };
+    }
+
+    set((current) => ({
+      repairSession:
+        current.repairSession && current.repairSession.layerId === layerId
+          ? {
+              ...current.repairSession,
+              isSubmitting: true
+            }
+          : current.repairSession,
+      document: updateLayers(current.document, (layers) =>
+        layers.map((entry) =>
+          entry.id === layerId && entry.type === "image"
+            ? {
+                ...entry,
+                aiMeta: {
+                  ...entry.aiMeta,
+                  lastAiAction: "repair",
+                  lastAiRequestedAt: new Date().toISOString(),
+                  lastAiError: null,
+                  repairTask: {
+                    taskId: null,
+                    status: "pending",
+                    resultUrl: null,
+                    providerModel: null,
+                    errorMessage: null
+                  }
+                }
+              }
+            : entry
+        )
+      )
+    }));
+
+    try {
+      const imageDataUrl = await renderImageLayerCropDataUrl(layer);
+      const maskDataUrl = await renderRepairMaskDataUrl(layer, state.repairSession.strokes);
+      const result = await runImageRepairTask({
+        imageDataUrl,
+        maskDataUrl,
+        prompt: layer.aiMeta.repairPrompt
+      });
+
+      if (result.status !== "succeeded" || !result.resultUrl) {
+        set((current) => ({
+          repairSession:
+            current.repairSession && current.repairSession.layerId === layerId
+              ? {
+                  ...current.repairSession,
+                  isSubmitting: false
+                }
+              : current.repairSession,
+          document: updateLayers(current.document, (layers) =>
+            layers.map((entry) =>
+              entry.id === layerId && entry.type === "image"
+                ? {
+                    ...entry,
+                    aiMeta: {
+                      ...entry.aiMeta,
+                      lastAiError: result.errorMessage,
+                      repairTask: {
+                        taskId: result.taskId,
+                        status: result.status,
+                        resultUrl: result.resultUrl,
+                        providerModel: result.providerModel,
+                        errorMessage: result.errorMessage
+                      }
+                    }
+                  }
+                : entry
+            )
+          )
+        }));
+
+        return { success: false, errorMessage: result.errorMessage ?? "AI repair failed." };
+      }
+
+      const size = await getImageSizeFromSource(result.resultUrl);
+
+      set((current) => {
+        const nextDocument = updateLayers(current.document, (layers) =>
+          layers.map((entry) =>
+            entry.id === layerId && entry.type === "image"
+              ? {
+                  ...entry,
+                  source: result.resultUrl!,
+                  originalWidth: size.width,
+                  originalHeight: size.height,
+                  crop: createImageCrop(size.width, size.height),
+                  aiMeta: {
+                    ...entry.aiMeta,
+                    lastAiError: null,
+                    lastAiSucceededAt: new Date().toISOString(),
+                    repairTask: {
+                      taskId: result.taskId,
+                      status: result.status,
+                      resultUrl: result.resultUrl,
+                      providerModel: result.providerModel,
+                      errorMessage: null
+                    }
+                  }
+                }
+              : entry
+          )
+        );
+
+        return commitDocumentChange(current, nextDocument, current.selectedLayerIds, {
+          repairSession: {
+            layerId,
+            strokes: [],
+            brushSize: current.repairSession?.brushSize ?? 36,
+            feather: 0,
+            isSubmitting: false
+          }
+        });
+      });
+
+      return { success: true, errorMessage: null };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "AI repair failed.";
+
+      set((current) => ({
+        repairSession:
+          current.repairSession && current.repairSession.layerId === layerId
+            ? {
+                ...current.repairSession,
+                isSubmitting: false
+              }
+            : current.repairSession,
+        document: updateLayers(current.document, (layers) =>
+          layers.map((entry) =>
+            entry.id === layerId && entry.type === "image"
+              ? {
+                  ...entry,
+                  aiMeta: {
+                    ...entry.aiMeta,
+                    lastAiError: errorMessage,
+                    repairTask: {
+                      ...entry.aiMeta.repairTask,
+                      status: "failed",
+                      errorMessage
+                    }
+                  }
+                }
+              : entry
+          )
+        )
+      }));
+
+      return { success: false, errorMessage };
+    }
+  },
   applyAi3d: async (layerId, customUrl) => {
     const state = get();
     const layer = state.document.layers.find(
@@ -1494,6 +1788,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       selectedLayerIds: [],
       document: clearDocumentLayers(state.document),
       cropSession: null,
+      repairSession: null,
       historyPast: [],
       historyFuture: []
     })),
@@ -1509,6 +1804,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         document: cloneDocument(previous.document),
         selectedLayerIds: [...previous.selectedLayerIds],
         cropSession: null,
+        repairSession: null,
         historyPast: state.historyPast.slice(0, -1),
         historyFuture: [
           createHistoryEntry(state.document, state.selectedLayerIds),
@@ -1528,6 +1824,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         document: cloneDocument(next.document),
         selectedLayerIds: [...next.selectedLayerIds],
         cropSession: null,
+        repairSession: null,
         historyPast: trimHistory([
           ...state.historyPast.map(cloneHistoryEntry),
           createHistoryEntry(state.document, state.selectedLayerIds)

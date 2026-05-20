@@ -4,6 +4,7 @@ interface ImportMetaEnv {
   readonly VITE_AI_BASE_URL: string;
   readonly VITE_AI_API_KEY: string;
   readonly VITE_AI_MODEL: string;
+  readonly VITE_AI_REPAIR_MODEL: string;
   readonly VITE_AI_TIMEOUT_MS: string;
 }
 

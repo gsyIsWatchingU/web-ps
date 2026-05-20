@@ -25,6 +25,9 @@ type Seed3DStatusResponse = {
   result?: Array<{
     url?: string;
   }>;
+  content?: {
+    file_url?: string;
+  };
   error_code?: string;
   error_message?: string;
   code?: string;
@@ -35,6 +38,9 @@ type Seed3DStatusResponse = {
     result?: Array<{
       url?: string;
     }>;
+    content?: {
+      file_url?: string;
+    };
     error_code?: string;
     error_message?: string;
   };
@@ -248,7 +254,13 @@ export async function pollSeed3dTask(taskId: string): Promise<Seed3DTaskResult> 
       }
 
       const status = normalizeTaskStatus(providerStatus);
-      const resultUrl = payload.result?.[0]?.url ?? payload.task?.result?.[0]?.url;
+      let resultUrl = payload.result?.[0]?.url ?? payload.task?.result?.[0]?.url;
+      if (!resultUrl) {
+        resultUrl = payload.content?.file_url ?? payload.task?.content?.file_url;
+      }
+      if (resultUrl) {
+        resultUrl = resultUrl.trim().replace(/^['"`]/, '').replace(/['"`]$/, '');
+      }
 
       if (status === "succeeded") {
         

@@ -104,7 +104,8 @@ const imageLayerSchema = layerBaseSchema.extend({
   aiMeta: z.object({
     prompt: z.string(),
     expandPrompt: z.string(),
-    lastAiAction: z.enum(["seed3d", "outpaint"]).nullable(),
+    repairPrompt: z.string().default(""),
+    lastAiAction: z.enum(["seed3d", "outpaint", "repair"]).nullable(),
     lastAiRequestedAt: z.string().nullable(),
     lastAiSucceededAt: z.string().nullable(),
     lastAiError: z.string().nullable(),
@@ -122,6 +123,21 @@ const imageLayerSchema = layerBaseSchema.extend({
         downloadUrl: null,
         fileName: null,
         providerModel: null
+      }),
+    repairTask: z
+      .object({
+        taskId: z.string().nullable(),
+        status: z.enum(["idle", "pending", "running", "succeeded", "failed"]),
+        resultUrl: z.string().nullable(),
+        providerModel: z.string().nullable(),
+        errorMessage: z.string().nullable()
+      })
+      .default({
+        taskId: null,
+        status: "idle",
+        resultUrl: null,
+        providerModel: null,
+        errorMessage: null
       })
   })
 })

@@ -10,9 +10,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@types/three": "^0.184.1",
     "fabric": "^6.0.0",
+    "jszip": "^3.10.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "three": "^0.184.0",
     "zod": "^3.24.0",
     "zustand": "^5.0.0"
   },
