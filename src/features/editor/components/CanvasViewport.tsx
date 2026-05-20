@@ -299,8 +299,7 @@ function drawRepairOverlay(
   context: CanvasRenderingContext2D,
   layer: ImageLayer,
   strokes: RepairStroke[],
-  livePoints: DoodlePoint[],
-  brushSize: number,
+  liveRect: { start: DoodlePoint; end: DoodlePoint } | null,
   viewport: EditorDocument["canvas"]["viewport"]
 ) {
   const visibleWidth = layer.crop.width * layer.transform.scaleX;
@@ -311,28 +310,29 @@ function drawRepairOverlay(
   context.fillStyle = "rgba(210, 68, 50, 0.08)";
   context.fillRect(layer.transform.x, layer.transform.y, visibleWidth, visibleHeight);
   context.strokeStyle = "rgba(214, 72, 56, 0.92)";
-  context.lineCap = "round";
-  context.lineJoin = "round";
+  context.lineWidth = 2;
 
-  const drawStroke = (points: DoodlePoint[], width: number) => {
-    if (points.length < 2) {
-      return;
-    }
-
-    context.beginPath();
-    context.lineWidth = width;
-    points.forEach((point, index) => {
-      if (index === 0) {
-        context.moveTo(point.x, point.y);
-      } else {
-        context.lineTo(point.x, point.y);
-      }
-    });
-    context.stroke();
+  const drawRect = (start: DoodlePoint, end: DoodlePoint) => {
+    const x = Math.min(start.x, end.x);
+    const y = Math.min(start.y, end.y);
+    const width = Math.abs(end.x - start.x);
+    const height = Math.abs(end.y - start.y);
+    
+    context.fillStyle = "rgba(214, 72, 56, 0.25)";
+    context.fillRect(x, y, width, height);
+    context.strokeStyle = "rgba(214, 72, 56, 0.92)";
+    context.strokeRect(x, y, width, height);
   };
 
-  strokes.forEach((stroke) => drawStroke(stroke.points, stroke.brushSize));
-  drawStroke(livePoints, brushSize);
+  strokes.forEach((stroke) => {
+    if (stroke.points.length >= 2) {
+      drawRect(stroke.points[0], stroke.points[stroke.points.length - 1]);
+    }
+  });
+  
+  if (liveRect) {
+    drawRect(liveRect.start, liveRect.end);
+  }
   context.restore();
 }
 
@@ -453,12 +453,14 @@ export function CanvasViewport({
       selectedImageLayerRef.current &&
       repairSessionRef.current.layerId === selectedImageLayerRef.current.id
     ) {
+      const liveRect = drawSessionRef.current.mode === "repair" && doodlePointsRef.current.length >= 2
+        ? { start: doodlePointsRef.current[0], end: doodlePointsRef.current[doodlePointsRef.current.length - 1] }
+        : null;
       drawRepairOverlay(
         context,
         selectedImageLayerRef.current,
         repairSessionRef.current.strokes,
-        doodlePointsRef.current,
-        repairSessionRef.current.brushSize,
+        liveRect,
         effectiveViewport
       );
     }
@@ -653,7 +655,9 @@ export function CanvasViewport({
       }
 
       if (drawSessionRef.current.mode === "repair" && currentTool === "repair") {
-        doodlePointsRef.current = [...doodlePointsRef.current, docPoint];
+        if (doodlePointsRef.current.length > 0) {
+          doodlePointsRef.current = [doodlePointsRef.current[0], docPoint];
+        }
         renderOverlay();
         return;
       }

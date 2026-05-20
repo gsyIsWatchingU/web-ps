@@ -25,7 +25,10 @@ function isZipUrl(url: string): boolean {
 }
 
 async function extractGlbFromZip(arrayBuffer: ArrayBuffer): Promise<ArrayBuffer> {
+  console.log("[GLBViewer] Extracting ZIP file...");
   const zip = await JSZip.loadAsync(arrayBuffer);
+  
+  console.log("[GLBViewer] ZIP contents:", Object.keys(zip.files));
   
   const glbFiles = Object.keys(zip.files).filter(
     fileName => fileName.toLowerCase().endsWith(".glb") || fileName.toLowerCase().endsWith(".gltf")
@@ -36,8 +39,18 @@ async function extractGlbFromZip(arrayBuffer: ArrayBuffer): Promise<ArrayBuffer>
   }
 
   const glbFile = glbFiles[0];
+  console.log(`[GLBViewer] Found model file: ${glbFile}`);
+  
   const fileData = await zip.files[glbFile].async("arraybuffer");
+  console.log(`[GLBViewer] Extracted model size: ${fileData.byteLength} bytes`);
+  
   return fileData;
+}
+
+function isHtmlContent(arrayBuffer: ArrayBuffer): boolean {
+  const decoder = new TextDecoder('utf-8');
+  const preview = decoder.decode(arrayBuffer.slice(0, 100));
+  return preview.toLowerCase().includes('<!doctype') || preview.toLowerCase().includes('<html');
 }
 
 export function GLBModelViewer({ modelUrl }: GLBModelViewerProps) {
@@ -95,13 +108,27 @@ export function GLBModelViewer({ modelUrl }: GLBModelViewerProps) {
     const loadModel = async () => {
       try {
         const proxyUrl = getProxyUrl(modelUrl);
+        console.log("[GLBViewer] Loading model from:", proxyUrl);
+        console.log("[GLBViewer] Original URL:", modelUrl);
 
         const response = await fetch(proxyUrl);
+        
+        console.log("[GLBViewer] Response status:", response.status, response.statusText);
+        console.log("[GLBViewer] Response headers:", Object.fromEntries(response.headers.entries()));
+        
         if (!response.ok) {
           throw new Error(`Failed to fetch model: ${response.status} ${response.statusText}`);
         }
 
         let modelArrayBuffer = await response.arrayBuffer();
+        console.log(`[GLBViewer] Downloaded ${modelArrayBuffer.byteLength} bytes`);
+
+        if (isHtmlContent(modelArrayBuffer)) {
+          const decoder = new TextDecoder('utf-8');
+          const preview = decoder.decode(modelArrayBuffer.slice(0, 500));
+          console.error("[GLBViewer] Got HTML instead of model file! Preview:", preview);
+          throw new Error("无法获取模型文件，请检查开发服务器是否已重启，或联系管理员。");
+        }
 
         if (isZipUrl(modelUrl)) {
           setError("正在解压模型文件...");
@@ -112,10 +139,12 @@ export function GLBModelViewer({ modelUrl }: GLBModelViewerProps) {
         const blob = new Blob([modelArrayBuffer], { type: "application/octet-stream" });
         const blobUrl = URL.createObjectURL(blob);
         blobUrlRef.current = blobUrl;
+        console.log("[GLBViewer] Created blob URL:", blobUrl);
 
         loader.load(
           blobUrl,
           (gltf) => {
+            console.log("[GLBViewer] Model loaded successfully!");
             const model = gltf.scene;
 
             model.traverse((child) => {

@@ -1511,16 +1511,16 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     if (layer.transform.rotation !== 0 || layer.transform.flipX || layer.transform.flipY) {
       return {
         success: false,
-        errorMessage: "AI repair currently supports only unrotated, non-flipped image layers."
+        errorMessage: "局部调整当前仅支持未旋转、未翻转的图片图层。"
       };
     }
 
     if (!state.repairSession || state.repairSession.layerId !== layerId || !hasRepairMask(state.repairSession)) {
-      return { success: false, errorMessage: "Please paint a repair mask before submitting." };
+      return { success: false, errorMessage: "请先在画布上框选需要修复的区域。" };
     }
 
     if (!layer.aiMeta.repairPrompt.trim()) {
-      return { success: false, errorMessage: "Please enter a repair prompt." };
+      return { success: false, errorMessage: "请输入修复提示词。" };
     }
 
     set((current) => ({
@@ -1595,7 +1595,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
           )
         }));
 
-        return { success: false, errorMessage: result.errorMessage ?? "AI repair failed." };
+        return { success: false, errorMessage: result.errorMessage ?? "局部调整失败。" };
       }
 
       const size = await getImageSizeFromSource(result.resultUrl);
@@ -1640,7 +1640,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
       return { success: true, errorMessage: null };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "AI repair failed.";
+      const errorMessage = error instanceof Error ? error.message : "局部调整失败。";
 
       set((current) => ({
         repairSession:

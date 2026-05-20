@@ -299,8 +299,8 @@ const toolItemsAntd = [
   },
   {
     id: "repair",
-    label: "AI Repair",
-    hint: "Paint a local mask and let AI rewrite only that region.",
+    label: "局部调整",
+    hint: "框选需要AI修复的局部区域",
     icon: (
       <IconBase>
         <path d="M6 17 17 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
@@ -710,11 +710,11 @@ export function EditorWorkspace() {
       const result = await applyAiRepair(imageLayer.id);
 
       if (result.success) {
-        setFeedbackMessage("AI repair completed and replaced the selected image.");
+        setFeedbackMessage("局部调整完成，已替换选中的图片。");
         return;
       }
 
-      setFeedbackMessage(result.errorMessage ?? "AI repair failed.");
+      setFeedbackMessage(result.errorMessage ?? "局部调整失败。");
     } finally {
       setAiBusy(null);
     }
@@ -999,31 +999,18 @@ export function EditorWorkspace() {
           <div className="workspace__property-list">
             {!aiConfigured ? (
               <p className="workspace__warning">
-                AI is not configured yet. Set `VITE_AI_BASE_URL`, `VITE_AI_API_KEY`, and a repair-capable model before using local repair.
+                AI 配置未完成。请先设置 `VITE_AI_BASE_URL`、`VITE_AI_API_KEY` 和支持修复的模型。
               </p>
             ) : null}
             <label className="workspace__property">
-              <span className="workspace__property-label">Repair prompt</span>
+              <span className="workspace__property-label">修复提示词</span>
               <textarea
                 className="workspace__text-area"
                 onChange={(event) => updateRepairPrompt(selectedImageLayer.id, event.target.value)}
-                placeholder="Describe only the local change you want, for example: remove the watermark, replace the logo, fix the torn edge."
+                placeholder="描述您想要的局部修改，例如：移除水印、替换logo、修复破损边缘。"
                 rows={4}
                 value={selectedImageLayer.aiMeta.repairPrompt}
               />
-            </label>
-            <label className="workspace__property">
-              <span className="workspace__property-label">Brush size</span>
-              <input
-                className="workspace__range"
-                max={120}
-                min={4}
-                onChange={(event) => setRepairBrushSize(Number(event.target.value))}
-                step={1}
-                type="range"
-                value={activeRepairSession?.brushSize ?? 36}
-              />
-              <div className="workspace__property-value">{activeRepairSession?.brushSize ?? 36}px</div>
             </label>
             <div className="workspace__inline-actions">
               <button
@@ -1032,7 +1019,7 @@ export function EditorWorkspace() {
                 onClick={() => clearRepairSession()}
                 type="button"
               >
-                Clear mask
+                清除选区
               </button>
               <button
                 className="workspace__action-button"
@@ -1047,15 +1034,15 @@ export function EditorWorkspace() {
                 onClick={() => void handleAiRepair()}
                 type="button"
               >
-                {aiBusy === "repair" || activeRepairSession?.isSubmitting ? "Repairing..." : "Run repair"}
+                {aiBusy === "repair" || activeRepairSession?.isSubmitting ? "修复中..." : "执行修复"}
               </button>
             </div>
             <p className="workspace__footer-note">
-              Paint the area to change, then describe the edit in the prompt. The rest of the image stays as context for the model.
+              在画布上框选需要修改的区域，然后在提示词中描述编辑内容。图片其余部分将作为模型的上下文参考。
             </p>
             {repairTask.status !== "idle" ? (
               <p className="workspace__footer-note">
-                Repair status: {repairTask.status}
+                修复状态: {repairTask.status}
                 {repairTask.taskId ? ` (${repairTask.taskId})` : ""}
               </p>
             ) : null}
