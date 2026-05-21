@@ -372,10 +372,47 @@ function drawSafeAreaOverlay(
   context.setLineDash([18, 10]);
   context.strokeRect(safeX, safeY, safeWidth, safeHeight);
 
+  const safeAreaHint = "重要内容请勿超出安全区，以免在不同投放尺寸或平台裁切时被遮挡或截断。";
+  const hintPaddingX = 14;
+  const hintPaddingY = 10;
+  const hintOffset = 12;
+  const maxHintWidth = Math.min(360, Math.max(180, safeWidth - hintOffset * 2 - hintPaddingX * 2));
+  const hintLines: string[] = [];
+
+  context.font = '600 16px "Segoe UI"';
+  context.textBaseline = "top";
+
+  let currentLine = "";
+  for (const char of safeAreaHint) {
+    const nextLine = `${currentLine}${char}`;
+    if (currentLine && context.measureText(nextLine).width > maxHintWidth) {
+      hintLines.push(currentLine);
+      currentLine = char;
+    } else {
+      currentLine = nextLine;
+    }
+  }
+  if (currentLine) {
+    hintLines.push(currentLine);
+  }
+
+  const visibleLines = hintLines.slice(0, 2);
+  const lineHeight = 22;
+  const hintBoxWidth = Math.min(
+    safeWidth - hintOffset * 2,
+    Math.max(...visibleLines.map((line) => context.measureText(line).width), 0) + hintPaddingX * 2
+  );
+  const hintBoxHeight = visibleLines.length * lineHeight + hintPaddingY * 2;
+  const hintX = safeX + hintOffset;
+  const hintY = safeY + hintOffset;
+
+  context.fillStyle = "rgba(255, 248, 238, 0.94)";
+  context.fillRect(hintX, hintY, hintBoxWidth, hintBoxHeight);
+
   context.fillStyle = "rgba(195, 111, 73, 0.94)";
-  context.font = '600 18px "Segoe UI"';
-  context.textBaseline = "bottom";
-  context.fillText("Safe area", safeX + 12, Math.max(24, safeY - 10));
+  visibleLines.forEach((line, index) => {
+    context.fillText(line, hintX + hintPaddingX, hintY + hintPaddingY + index * lineHeight);
+  });
   context.restore();
 }
 

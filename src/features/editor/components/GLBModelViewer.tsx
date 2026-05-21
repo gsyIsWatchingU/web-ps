@@ -13,6 +13,9 @@ function isLocalhost() {
 }
 
 function getProxyUrl(originalUrl: string): string {
+  if (originalUrl.startsWith("blob:")) {
+    return originalUrl;
+  }
   if (isLocalhost()) {
     return `/api/model-proxy?url=${encodeURIComponent(originalUrl)}`;
   }
@@ -22,6 +25,15 @@ function getProxyUrl(originalUrl: string): string {
 function isZipUrl(url: string): boolean {
   const lowerUrl = url.toLowerCase();
   return lowerUrl.endsWith(".zip");
+}
+
+function isZipContent(arrayBuffer: ArrayBuffer): boolean {
+  const bytes = new Uint8Array(arrayBuffer);
+  return bytes.length >= 4 && 
+         bytes[0] === 0x50 && 
+         bytes[1] === 0x4B && 
+         bytes[2] === 0x03 && 
+         bytes[3] === 0x04;
 }
 
 async function extractGlbFromZip(arrayBuffer: ArrayBuffer): Promise<ArrayBuffer> {
@@ -130,7 +142,8 @@ export function GLBModelViewer({ modelUrl }: GLBModelViewerProps) {
           throw new Error("无法获取模型文件，请检查开发服务器是否已重启，或联系管理员。");
         }
 
-        if (isZipUrl(modelUrl)) {
+        if (isZipUrl(modelUrl) || isZipContent(modelArrayBuffer)) {
+          console.log("[GLBViewer] Detected ZIP file, extracting...");
           setError("正在解压模型文件...");
           modelArrayBuffer = await extractGlbFromZip(modelArrayBuffer);
           setError(null);

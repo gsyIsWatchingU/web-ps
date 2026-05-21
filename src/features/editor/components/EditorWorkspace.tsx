@@ -21,6 +21,7 @@ import { exportDocument } from "../runtime/exportDocument";
 import { renderPresetPreviewDataUrl } from "../runtime/lutEngine";
 import { useEditorStore } from "../store/useEditorStore";
 import { CanvasViewport } from "./CanvasViewport";
+import { GlbUploadPreviewDialog } from "./GlbUploadPreviewDialog";
 import { ModelPreviewDialog } from "./ModelPreviewDialog";
 import { useMessage } from "../../../shared/message";
 
@@ -368,6 +369,7 @@ export function EditorWorkspace() {
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [isExportDialogOpen, setIsExportDialogOpen] = useState(false);
   const [isModelPreviewOpen, setIsModelPreviewOpen] = useState(false);
+  const [isGlbPreviewOpen, setIsGlbPreviewOpen] = useState(false);
   const [previewModelUrl, setPreviewModelUrl] = useState<string>("");
   const [previewFileName, setPreviewFileName] = useState<string>("");
   const [doodleStyle, setDoodleStyle] = useState(createDefaultDoodleStyle);
@@ -2091,6 +2093,9 @@ export function EditorWorkspace() {
               <button className="workspace__tool-button" onClick={addDecorationLayer} type="button">
                 添加装饰
               </button>
+              <button className="workspace__tool-button" onClick={() => setIsGlbPreviewOpen(true)} type="button">
+                预览
+              </button>
             </div>
           </div>
 
@@ -2119,7 +2124,7 @@ export function EditorWorkspace() {
             <span>Version: {String(document.workflowMeta.version).padStart(3, "0")}</span>
           </div>
           <div className="workspace__status-group">
-            <span>Safe area: {document.canvas.safeAreaInset}px</span>
+            <span>安全区: {document.canvas.safeAreaInset}px</span>
             <span>Zoom: {Math.round(viewport.zoom * 100)}%</span>
             <span>Pan: {Math.round(viewport.panX)} / {Math.round(viewport.panY)}</span>
           </div>
@@ -2386,6 +2391,11 @@ export function EditorWorkspace() {
         fileName={previewFileName}
         isOpen={isModelPreviewOpen}
         onClose={() => setIsModelPreviewOpen(false)}
+      />
+
+      <GlbUploadPreviewDialog
+        isOpen={isGlbPreviewOpen}
+        onClose={() => setIsGlbPreviewOpen(false)}
       />
     </div>
   );
