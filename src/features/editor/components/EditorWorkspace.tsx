@@ -1003,6 +1003,7 @@ export function EditorWorkspace() {
 
       if (activeTool === "repair") {
         const repairTask = selectedImageLayer.aiMeta.repairTask;
+        const repairDownloadName = repairTask.fileName || "repair-result.jpg";
 
         return (
           <div className="workspace__property-list">
@@ -1109,6 +1110,23 @@ export function EditorWorkspace() {
                 重绘状态：{repairTask.status}
                 {repairTask.taskId ? ` (${repairTask.taskId})` : ""}
               </p>
+            ) : null}
+            {repairTask.status === "succeeded" && repairTask.downloadUrl ? (
+              <div className="workspace__inline-actions">
+                <a
+                  className="workspace__action-button"
+                  download={repairDownloadName}
+                  href={repairTask.downloadUrl}
+                  rel="noopener noreferrer"
+                  style={{ textDecoration: "none" }}
+                  target="_blank"
+                >
+                  下载原图
+                </a>
+              </div>
+            ) : null}
+            {repairTask.status === "succeeded" && repairTask.resultUrl ? (
+              <p className="workspace__footer-note">已回填到工作台，可下载原图。</p>
             ) : null}
             {repairTask.errorMessage ? <p className="workspace__warning">{repairTask.errorMessage}</p> : null}
             {lastAiError && !repairTask.errorMessage ? <p className="workspace__warning">{lastAiError}</p> : null}

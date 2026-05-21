@@ -133,6 +133,8 @@ const imageLayerSchema = layerBaseSchema.extend({
         taskId: z.string().nullable(),
         status: z.enum(["idle", "pending", "running", "succeeded", "failed"]),
         resultUrl: z.string().nullable(),
+        downloadUrl: z.string().nullable().default(null),
+        fileName: z.string().nullable().default(null),
         providerModel: z.string().nullable(),
         errorMessage: z.string().nullable()
       })
@@ -140,6 +142,8 @@ const imageLayerSchema = layerBaseSchema.extend({
         taskId: null,
         status: "idle",
         resultUrl: null,
+        downloadUrl: null,
+        fileName: null,
         providerModel: null,
         errorMessage: null
       })

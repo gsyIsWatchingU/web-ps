@@ -14,6 +14,8 @@ export type ImageRepairTaskResult = {
   taskId: string | null;
   status: "pending" | "running" | "succeeded" | "failed";
   resultUrl: string | null;
+  downloadUrl: string | null;
+  fileName: string | null;
   providerModel: string | null;
   errorMessage: string | null;
 };
@@ -148,6 +150,29 @@ function extractResultUrl(payload: ImageEditResponse) {
     payload.task?.content?.file_url ??
     null
   );
+}
+
+function extractFileNameFromUrl(url: string) {
+  try {
+    const parsedUrl = new URL(url);
+    const pathParts = parsedUrl.pathname.split("/");
+    const fileName = pathParts[pathParts.length - 1];
+    return fileName || "repair-result.jpg";
+  } catch {
+    return "repair-result.jpg";
+  }
+}
+
+function toCanvasSafeImageUrl(url: string) {
+  if (
+    typeof window !== "undefined" &&
+    ["localhost", "127.0.0.1", "0.0.0.0"].includes(window.location.hostname) &&
+    /^https?:\/\//i.test(url)
+  ) {
+    return `/api/asset-proxy?url=${encodeURIComponent(url)}`;
+  }
+
+  return url;
 }
 
 function buildErrorMessage(payload: ImageEditResponse, fallback: string) {
@@ -563,6 +588,8 @@ async function pollImageEditTask(taskId: string): Promise<ImageRepairTaskResult>
         taskId,
         status: "failed",
         resultUrl: null,
+        downloadUrl: null,
+        fileName: null,
         providerModel: payload.providerModel ?? payload.model ?? aiConfig.repairModel ?? null,
         errorMessage: buildErrorMessage(payload, `AI repair request failed with ${response.status}.`)
       };
@@ -575,7 +602,9 @@ async function pollImageEditTask(taskId: string): Promise<ImageRepairTaskResult>
       return {
         taskId,
         status,
-        resultUrl,
+        resultUrl: toCanvasSafeImageUrl(resultUrl),
+        downloadUrl: resultUrl,
+        fileName: extractFileNameFromUrl(resultUrl),
         providerModel: payload.providerModel ?? payload.model ?? aiConfig.repairModel ?? null,
         errorMessage: null
       };
@@ -586,6 +615,8 @@ async function pollImageEditTask(taskId: string): Promise<ImageRepairTaskResult>
         taskId,
         status,
         resultUrl: null,
+        downloadUrl: null,
+        fileName: null,
         providerModel: payload.providerModel ?? payload.model ?? aiConfig.repairModel ?? null,
         errorMessage: buildErrorMessage(payload, "AI repair failed.")
       };
@@ -598,6 +629,8 @@ async function pollImageEditTask(taskId: string): Promise<ImageRepairTaskResult>
     taskId,
     status: "failed",
     resultUrl: null,
+    downloadUrl: null,
+    fileName: null,
     providerModel: aiConfig.repairModel || null,
     errorMessage: "AI repair timed out."
   };
@@ -621,6 +654,8 @@ async function pollGuidedRepairTask(taskId: string, model: string): Promise<Imag
         taskId,
         status: "failed",
         resultUrl: null,
+        downloadUrl: null,
+        fileName: null,
         providerModel: payload.providerModel ?? payload.model ?? model,
         errorMessage: buildErrorMessage(payload, `AI repair request failed with ${response.status}.`)
       };
@@ -633,7 +668,9 @@ async function pollGuidedRepairTask(taskId: string, model: string): Promise<Imag
       return {
         taskId,
         status,
-        resultUrl,
+        resultUrl: toCanvasSafeImageUrl(resultUrl),
+        downloadUrl: resultUrl,
+        fileName: extractFileNameFromUrl(resultUrl),
         providerModel: payload.providerModel ?? payload.model ?? model,
         errorMessage: null
       };
@@ -644,6 +681,8 @@ async function pollGuidedRepairTask(taskId: string, model: string): Promise<Imag
         taskId,
         status,
         resultUrl: null,
+        downloadUrl: null,
+        fileName: null,
         providerModel: payload.providerModel ?? payload.model ?? model,
         errorMessage: buildErrorMessage(payload, "AI guided repair failed.")
       };
@@ -656,6 +695,8 @@ async function pollGuidedRepairTask(taskId: string, model: string): Promise<Imag
     taskId,
     status: "failed",
     resultUrl: null,
+    downloadUrl: null,
+    fileName: null,
     providerModel: model,
     errorMessage: "AI repair timed out."
   };
@@ -672,6 +713,8 @@ async function runGuidedRepaintTask({
       taskId: null,
       status: "failed",
       resultUrl: null,
+      downloadUrl: null,
+      fileName: null,
       providerModel: model ?? aiConfig.repairModel ?? aiConfig.model,
       errorMessage: "Repair guide image is required for guided repaint mode."
     };
@@ -703,6 +746,8 @@ async function runGuidedRepaintTask({
       taskId: extractTaskId(payload),
       status: "failed",
       resultUrl: null,
+      downloadUrl: null,
+      fileName: null,
       providerModel,
       errorMessage: buildErrorMessage(payload, `AI repair request failed with ${response.status}.`)
     };
@@ -715,8 +760,10 @@ async function runGuidedRepaintTask({
   if (resultUrl) {
     return {
       taskId,
-      status: status === "failed" ? "succeeded" : status,
-      resultUrl,
+      status: "succeeded",
+      resultUrl: toCanvasSafeImageUrl(resultUrl),
+      downloadUrl: resultUrl,
+      fileName: extractFileNameFromUrl(resultUrl),
       providerModel,
       errorMessage: null
     };
@@ -730,6 +777,8 @@ async function runGuidedRepaintTask({
     taskId: null,
     status: "failed",
     resultUrl: null,
+    downloadUrl: null,
+    fileName: null,
     providerModel,
     errorMessage: buildErrorMessage(payload, "AI repair did not return a result.")
   };
@@ -774,6 +823,8 @@ async function runInpaintingTask({
       taskId: extractTaskId(payload),
       status: "failed",
       resultUrl: null,
+      downloadUrl: null,
+      fileName: null,
       providerModel,
       errorMessage: buildErrorMessage(payload, `AI repair request failed with ${response.status}.`)
     };
@@ -786,8 +837,10 @@ async function runInpaintingTask({
   if (resultUrl) {
     return {
       taskId,
-      status: status === "failed" ? "succeeded" : status,
-      resultUrl,
+      status: "succeeded",
+      resultUrl: toCanvasSafeImageUrl(resultUrl),
+      downloadUrl: resultUrl,
+      fileName: extractFileNameFromUrl(resultUrl),
       providerModel,
       errorMessage: null
     };
@@ -801,6 +854,8 @@ async function runInpaintingTask({
     taskId: null,
     status: "failed",
     resultUrl: null,
+    downloadUrl: null,
+    fileName: null,
     providerModel,
     errorMessage: buildErrorMessage(payload, "AI repair did not return a result.")
   };
@@ -812,6 +867,8 @@ export async function runImageRepairTask(input: ImageRepairTaskInput): Promise<I
       taskId: null,
       status: "failed",
       resultUrl: null,
+      downloadUrl: null,
+      fileName: null,
       providerModel: null,
       errorMessage: "AI is not configured. Please set the required environment variables first."
     };

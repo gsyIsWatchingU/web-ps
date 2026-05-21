@@ -151,6 +151,8 @@ export type ImageAiMeta = {
     taskId: string | null;
     status: "idle" | "pending" | "running" | "succeeded" | "failed";
     resultUrl: string | null;
+    downloadUrl: string | null;
+    fileName: string | null;
     providerModel: string | null;
     errorMessage: string | null;
   };
@@ -776,6 +778,8 @@ export function createDefaultImageAiMeta(): ImageAiMeta {
       taskId: null,
       status: "idle",
       resultUrl: null,
+      downloadUrl: null,
+      fileName: null,
       providerModel: null,
       errorMessage: null
     }

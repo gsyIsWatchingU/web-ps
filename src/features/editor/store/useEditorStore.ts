@@ -1598,6 +1598,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
                     taskId: null,
                     status: "pending",
                     resultUrl: null,
+                    downloadUrl: null,
+                    fileName: null,
                     providerModel: null,
                     errorMessage: null
                   }
@@ -1644,6 +1646,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
                         taskId: result.taskId,
                         status: result.status,
                         resultUrl: result.resultUrl,
+                        downloadUrl: result.downloadUrl,
+                        fileName: result.fileName,
                         providerModel: result.providerModel,
                         errorMessage: result.errorMessage
                       }
@@ -1677,6 +1681,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
                       taskId: result.taskId,
                       status: result.status,
                       resultUrl: result.resultUrl,
+                      downloadUrl: result.downloadUrl,
+                      fileName: result.fileName,
                       providerModel: result.providerModel,
                       errorMessage: null
                     }
