@@ -39,8 +39,12 @@ import {
 import { editorDocumentSchema } from "../model/document.schema";
 import { runSeed3dTask } from "../runtime/aiBridge";
 import {
+  buildRepairPrompt,
+  type RepairMode,
+  analyzeRepairMask,
   getImageSizeFromSource,
   renderImageLayerCropDataUrl,
+  renderRepairGuideDataUrl,
   renderRepairMaskDataUrl,
   runImageRepairTask
 } from "../runtime/imageEditBridge";
@@ -67,6 +71,8 @@ type RepairSession = {
   strokes: RepairStroke[];
   brushSize: number;
   feather: number;
+  toolMode: "brush" | "eraser";
+  guidePreviewEnabled: boolean;
   isSubmitting: boolean;
 } | null;
 
@@ -140,7 +146,10 @@ type EditorStore = {
   startRepairSession: (layerId: string) => void;
   appendRepairStroke: (points: RepairStroke["points"]) => void;
   clearRepairSession: () => void;
+  undoRepairStroke: () => void;
   setRepairBrushSize: (size: number) => void;
+  setRepairToolMode: (mode: NonNullable<RepairSession>["toolMode"]) => void;
+  setRepairGuidePreviewEnabled: (enabled: boolean) => void;
   applyAiRepair: (layerId: string) => Promise<AsyncResult>;
   applyAi3d: (layerId: string, customUrl?: string) => Promise<AsyncResult>;
   clearCanvas: () => void;
@@ -343,6 +352,11 @@ function stripTransientDocumentState(document: EditorDocument): EditorDocument {
       displayBackground: {
         mode: document.canvas.displayBackground?.mode ?? ("grid" satisfies CanvasBackgroundMode),
         color: document.canvas.displayBackground?.color ?? "#fbf6ef"
+      },
+      viewport: {
+        zoom: 0.5,
+        panX: 0,
+        panY: 0
       }
     }
   };
@@ -454,7 +468,7 @@ function clampRepairBrushSize(size: number) {
 }
 
 function hasRepairMask(session: RepairSession) {
-  return Boolean(session?.strokes.some((stroke) => stroke.points.length > 1));
+  return Boolean(session?.strokes.some((stroke) => stroke.mode === "paint" && stroke.points.length > 1));
 }
 
 function createDoodleLayer(
@@ -1446,8 +1460,11 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         repairSession: {
           layerId,
           strokes: [],
-          brushSize: state.repairSession?.layerId === layerId ? state.repairSession.brushSize : 36,
-          feather: 0,
+          brushSize: state.repairSession?.layerId === layerId ? state.repairSession.brushSize : 24,
+          feather: state.repairSession?.layerId === layerId ? state.repairSession.feather : 0,
+          toolMode: state.repairSession?.layerId === layerId ? state.repairSession.toolMode : "brush",
+          guidePreviewEnabled:
+            state.repairSession?.layerId === layerId ? state.repairSession.guidePreviewEnabled : true,
           isSubmitting: false
         }
       };
@@ -1465,7 +1482,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
             ...state.repairSession.strokes,
             {
               points,
-              brushSize: state.repairSession.brushSize
+              brushSize: state.repairSession.brushSize,
+              mode: state.repairSession.toolMode === "eraser" ? "erase" : "paint"
             }
           ]
         }
@@ -1485,6 +1503,19 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         }
       };
     }),
+  undoRepairStroke: () =>
+    set((state) => {
+      if (!state.repairSession || state.repairSession.strokes.length === 0) {
+        return state;
+      }
+
+      return {
+        repairSession: {
+          ...state.repairSession,
+          strokes: state.repairSession.strokes.slice(0, -1)
+        }
+      };
+    }),
   setRepairBrushSize: (size) =>
     set((state) => {
       if (!state.repairSession) {
@@ -1495,6 +1526,32 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         repairSession: {
           ...state.repairSession,
           brushSize: clampRepairBrushSize(size)
+        }
+      };
+    }),
+  setRepairToolMode: (mode) =>
+    set((state) => {
+      if (!state.repairSession) {
+        return state;
+      }
+
+      return {
+        repairSession: {
+          ...state.repairSession,
+          toolMode: mode
+        }
+      };
+    }),
+  setRepairGuidePreviewEnabled: (enabled) =>
+    set((state) => {
+      if (!state.repairSession) {
+        return state;
+      }
+
+      return {
+        repairSession: {
+          ...state.repairSession,
+          guidePreviewEnabled: enabled
         }
       };
     }),
@@ -1517,10 +1574,6 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
     if (!state.repairSession || state.repairSession.layerId !== layerId || !hasRepairMask(state.repairSession)) {
       return { success: false, errorMessage: "请先在画布上框选需要调整的区域。" };
-    }
-
-    if (!layer.aiMeta.repairPrompt.trim()) {
-      return { success: false, errorMessage: "请输入调整提示词。" };
     }
 
     set((current) => ({
@@ -1558,10 +1611,16 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     try {
       const imageDataUrl = await renderImageLayerCropDataUrl(layer);
       const maskDataUrl = await renderRepairMaskDataUrl(layer, state.repairSession.strokes);
+      const guideDataUrl = await renderRepairGuideDataUrl(layer, state.repairSession.strokes);
+      const maskAnalysis = await analyzeRepairMask(maskDataUrl);
+      const prompt = buildRepairPrompt(layer, state.repairSession, maskAnalysis);
+      const mode: RepairMode = "guided_repaint";
       const result = await runImageRepairTask({
         imageDataUrl,
         maskDataUrl,
-        prompt: layer.aiMeta.repairPrompt
+        guideDataUrl,
+        prompt,
+        mode
       });
 
       if (result.status !== "succeeded" || !result.resultUrl) {
@@ -1631,8 +1690,10 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
           repairSession: {
             layerId,
             strokes: [],
-            brushSize: current.repairSession?.brushSize ?? 36,
-            feather: 0,
+            brushSize: current.repairSession?.brushSize ?? 24,
+            feather: current.repairSession?.feather ?? 0,
+            toolMode: current.repairSession?.toolMode ?? "brush",
+            guidePreviewEnabled: current.repairSession?.guidePreviewEnabled ?? true,
             isSubmitting: false
           }
         });
@@ -1699,31 +1760,6 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       };
     }
 
-    set((current) => ({
-      document: updateLayers(current.document, (layers) =>
-        layers.map((entry) =>
-          entry.id === layerId && entry.type === "image"
-            ? {
-                ...entry,
-                aiMeta: {
-                  ...entry.aiMeta,
-                  lastAiAction: "seed3d",
-                  lastAiRequestedAt: new Date().toISOString(),
-                  lastAiError: null,
-                  model3dTask: {
-                    taskId: null,
-                    status: "pending",
-                    downloadUrl: null,
-                    fileName: null,
-                    providerModel: null
-                  }
-                }
-              }
-            : entry
-        )
-      )
-    }));
-
     try {
       const result = await runSeed3dTask(targetUrl, layer.aiMeta.prompt);
 
@@ -1735,6 +1771,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
                   ...entry,
                   aiMeta: {
                     ...entry.aiMeta,
+                    lastAiAction: "seed3d",
+                    lastAiRequestedAt: new Date().toISOString(),
                     model3dTask: {
                       taskId: result.taskId,
                       status: result.status,

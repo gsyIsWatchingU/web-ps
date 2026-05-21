@@ -719,6 +719,7 @@ button {
   padding: 18px;
   overflow: hidden;
   min-height: 0;
+  height: 100%;
 }
 
 .workspace__toolbar {
@@ -759,14 +760,17 @@ button {
 }
 
 .workspace__viewport-inner {
-  min-width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   min-height: 100%;
-  display: grid;
-  justify-items: center;
-  align-items: start;
+  min-width: 100%;
 }
 
 .workspace__viewport-board {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   transform-origin: center center;
 }
 
@@ -800,7 +804,7 @@ button {
 }
 
 .workspace__mask-overlay--interactive {
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .workspace__statusbar {

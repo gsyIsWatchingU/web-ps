@@ -125,6 +125,7 @@ export type DoodlePoint = {
 export type RepairStroke = {
   points: DoodlePoint[];
   brushSize: number;
+  mode: "paint" | "erase";
 };
 
 export type Model3dTaskStatus = "idle" | "pending" | "running" | "succeeded" | "failed";
@@ -759,7 +760,7 @@ export function createDefaultImageAiMeta(): ImageAiMeta {
   return {
     prompt: "生成高质量3D模型。",
     expandPrompt: "在延展画面的同时保持主体位置、背景氛围和整体光线一致。",
-    repairPrompt: "",
+    repairPrompt: "仅移除高亮标记的水印。保持所有未高亮内容不变，并保留产品边缘、主体细节、光线和色调。",
     lastAiAction: null,
     lastAiRequestedAt: null,
     lastAiSucceededAt: null,
@@ -819,7 +820,7 @@ export function createInitialDocument(): EditorDocument {
       },
       safeAreaInset: getDefaultSafeAreaInset(preset.width, preset.height),
       viewport: {
-        zoom: 0.72,
+        zoom: 0.5,
         panX: 0,
         panY: 0
       }

@@ -1,5 +1,5 @@
 import { Canvas } from "fabric";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, useCallback, type CSSProperties } from "react";
 import type {
   CanvasBackgroundMode,
   DoodlePoint,
@@ -23,6 +23,8 @@ type RepairSession = {
   strokes: RepairStroke[];
   brushSize: number;
   feather: number;
+  toolMode: "brush" | "eraser";
+  guidePreviewEnabled: boolean;
   isSubmitting: boolean;
 } | null;
 
@@ -124,7 +126,7 @@ function syncCanvasObjectInteractivity(
   runtime.getObjects().forEach((object) => {
     const layerId = getLayerId(object);
     const layer = layerId ? document.layers.find((item) => item.id === layerId) : null;
-    const isLocked = layer?.locked ?? true;
+    const isLocked = layer?.locked ?? false;
     const canInteract = !disableObjectInteraction && !isLocked;
 
     object.set({
@@ -221,15 +223,18 @@ function isPointInDocumentRect(point: DoodlePoint, rect: DocumentRect | null) {
 }
 
 function getCropPreviewBounds(layer: ImageLayer, crop: ImageCrop) {
+  const scaleX = layer.transform.scaleX || 1;
+  const scaleY = layer.transform.scaleY || 1;
+  
   return {
     imageX: layer.transform.x,
     imageY: layer.transform.y,
-    imageWidth: layer.originalWidth * layer.transform.scaleX,
-    imageHeight: layer.originalHeight * layer.transform.scaleY,
-    cropX: layer.transform.x + crop.x * layer.transform.scaleX,
-    cropY: layer.transform.y + crop.y * layer.transform.scaleY,
-    cropWidth: crop.width * layer.transform.scaleX,
-    cropHeight: crop.height * layer.transform.scaleY
+    imageWidth: layer.originalWidth * scaleX,
+    imageHeight: layer.originalHeight * scaleY,
+    cropX: layer.transform.x + crop.x * scaleX,
+    cropY: layer.transform.y + crop.y * scaleY,
+    cropWidth: crop.width * scaleX,
+    cropHeight: crop.height * scaleY
   };
 }
 
@@ -313,11 +318,51 @@ function drawCropOverlay(
   context.restore();
 }
 
+function drawRepairStroke(
+  context: CanvasRenderingContext2D,
+  stroke: RepairStroke
+) {
+  if (stroke.points.length === 0) {
+    return;
+  }
+
+  const isErase = stroke.mode === "erase";
+
+  context.save();
+  context.globalCompositeOperation = isErase ? "destination-out" : "source-over";
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.lineWidth = stroke.brushSize;
+  context.strokeStyle = isErase ? "rgba(0, 0, 0, 1)" : "rgba(214, 72, 56, 0.34)";
+  context.fillStyle = isErase ? "rgba(0, 0, 0, 1)" : "rgba(214, 72, 56, 0.34)";
+
+  if (stroke.points.length === 1) {
+    const point = stroke.points[0];
+    context.beginPath();
+    context.arc(point.x, point.y, stroke.brushSize / 2, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+
+    return;
+  }
+
+  context.beginPath();
+  stroke.points.forEach((point, index) => {
+    if (index === 0) {
+      context.moveTo(point.x, point.y);
+    } else {
+      context.lineTo(point.x, point.y);
+    }
+  });
+  context.stroke();
+  context.restore();
+}
+
 function drawRepairOverlay(
   context: CanvasRenderingContext2D,
   layer: ImageLayer,
   strokes: RepairStroke[],
-  liveRect: { start: DoodlePoint; end: DoodlePoint } | null,
+  liveStroke: RepairStroke | null,
   viewport: EditorDocument["canvas"]["viewport"]
 ) {
   const visibleWidth = layer.crop.width * layer.transform.scaleX;
@@ -325,32 +370,48 @@ function drawRepairOverlay(
 
   context.save();
   context.setTransform(viewport.zoom, 0, 0, viewport.zoom, viewport.panX, viewport.panY);
-  context.fillStyle = "rgba(210, 68, 50, 0.08)";
-  context.fillRect(layer.transform.x, layer.transform.y, visibleWidth, visibleHeight);
-  context.strokeStyle = "rgba(214, 72, 56, 0.92)";
-  context.lineWidth = 2;
-
-  const drawRect = (start: DoodlePoint, end: DoodlePoint) => {
-    const x = Math.min(start.x, end.x);
-    const y = Math.min(start.y, end.y);
-    const width = Math.abs(end.x - start.x);
-    const height = Math.abs(end.y - start.y);
-    
-    context.fillStyle = "rgba(214, 72, 56, 0.25)";
-    context.fillRect(x, y, width, height);
-    context.strokeStyle = "rgba(214, 72, 56, 0.92)";
-    context.strokeRect(x, y, width, height);
-  };
+  context.beginPath();
+  context.rect(layer.transform.x, layer.transform.y, visibleWidth, visibleHeight);
+  context.clip();
 
   strokes.forEach((stroke) => {
-    if (stroke.points.length >= 2) {
-      drawRect(stroke.points[0], stroke.points[stroke.points.length - 1]);
-    }
+    drawRepairStroke(context, stroke);
   });
-  
-  if (liveRect) {
-    drawRect(liveRect.start, liveRect.end);
+
+  if (liveStroke) {
+    drawRepairStroke(context, liveStroke);
   }
+
+  context.strokeStyle = "rgba(255, 255, 255, 0.9)";
+  context.lineWidth = 1.5;
+  strokes.forEach((stroke) => {
+    if (stroke.mode !== "paint" || stroke.points.length < 2) {
+      return;
+    }
+
+    context.beginPath();
+    stroke.points.forEach((point, index) => {
+      if (index === 0) {
+        context.moveTo(point.x, point.y);
+      } else {
+        context.lineTo(point.x, point.y);
+      }
+    });
+    context.stroke();
+  });
+
+  if (liveStroke?.mode === "paint" && liveStroke.points.length >= 2) {
+    context.beginPath();
+    liveStroke.points.forEach((point, index) => {
+      if (index === 0) {
+        context.moveTo(point.x, point.y);
+      } else {
+        context.lineTo(point.x, point.y);
+      }
+    });
+    context.stroke();
+  }
+
   context.restore();
 }
 
@@ -514,6 +575,24 @@ export function CanvasViewport({
     ...getCanvasSurfaceStyle(document)
   };
 
+  const handleOverlayClick = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
+    const pointer = { x: event.clientX, y: event.clientY };
+    const currentDocument = documentRef.current;
+    const rect = overlayRef.current?.getBoundingClientRect();
+
+    if (!rect) {
+      return;
+    }
+
+    const docPoint = mapClientPointToDocument(pointer.x, pointer.y, rect, currentDocument.canvas.viewport);
+
+    if (isPointInDocumentRect(docPoint, safeAreaHintLayoutRef.current?.closeButtonRect ?? null)) {
+      setIsSafeAreaHintDismissed(true);
+      event.stopPropagation();
+      return;
+    }
+  }, []);
+
   const renderOverlay = (viewport?: EditorDocument["canvas"]["viewport"]) => {
     const overlay = overlayRef.current;
 
@@ -542,16 +621,21 @@ export function CanvasViewport({
       activeToolRef.current === "repair" &&
       repairSessionRef.current &&
       selectedImageLayerRef.current &&
-      repairSessionRef.current.layerId === selectedImageLayerRef.current.id
+      repairSessionRef.current.layerId === selectedImageLayerRef.current.id &&
+      repairSessionRef.current.guidePreviewEnabled
     ) {
-      const liveRect = drawSessionRef.current.mode === "repair" && doodlePointsRef.current.length >= 2
-        ? { start: doodlePointsRef.current[0], end: doodlePointsRef.current[doodlePointsRef.current.length - 1] }
+      const liveStroke = drawSessionRef.current.mode === "repair" && doodlePointsRef.current.length > 0
+        ? {
+            points: doodlePointsRef.current,
+            brushSize: repairSessionRef.current.brushSize,
+            mode: (repairSessionRef.current.toolMode === "eraser" ? "erase" : "paint") as RepairStroke["mode"]
+          }
         : null;
       drawRepairOverlay(
         context,
         selectedImageLayerRef.current,
         repairSessionRef.current.strokes,
-        liveRect,
+        liveStroke,
         effectiveViewport
       );
     }
@@ -668,6 +752,7 @@ export function CanvasViewport({
 
       if (isPointInDocumentRect(docPoint, safeAreaHintLayoutRef.current?.closeButtonRect ?? null)) {
         setIsSafeAreaHintDismissed(true);
+        event.e.stopPropagation();
         return;
       }
 
@@ -751,9 +836,7 @@ export function CanvasViewport({
       }
 
       if (drawSessionRef.current.mode === "repair" && currentTool === "repair") {
-        if (doodlePointsRef.current.length > 0) {
-          doodlePointsRef.current = [doodlePointsRef.current[0], docPoint];
-        }
+        doodlePointsRef.current = [...doodlePointsRef.current, docPoint];
         renderOverlay();
         return;
       }
@@ -786,7 +869,9 @@ export function CanvasViewport({
     };
 
     const handleMouseWheel = (event: { e: WheelEvent }) => {
-      if (!event.e.ctrlKey) {
+      const hasModifier = event.e.ctrlKey || event.e.metaKey;
+
+      if (!hasModifier) {
         return;
       }
 
@@ -827,7 +912,7 @@ export function CanvasViewport({
         onDoodleCommitRef.current(doodlePointsRef.current);
       }
 
-      if (drawSessionRef.current.mode === "repair" && doodlePointsRef.current.length > 1) {
+      if (drawSessionRef.current.mode === "repair" && doodlePointsRef.current.length > 0) {
         onRepairStrokeCommitRef.current(doodlePointsRef.current);
       }
 
@@ -847,7 +932,16 @@ export function CanvasViewport({
     runtime.on("mouse:up", stopInteraction);
     runtime.on("mouse:wheel", handleMouseWheel);
 
+    const handleGlobalMouseUp = () => {
+      stopInteraction();
+    };
+
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    window.addEventListener('touchend', handleGlobalMouseUp);
+
     return () => {
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
+      window.removeEventListener('touchend', handleGlobalMouseUp);
       runtime.dispose();
       runtimeRef.current = null;
     };
@@ -929,6 +1023,7 @@ export function CanvasViewport({
               ref={overlayRef}
               className={`workspace__mask-overlay ${["doodle", "crop", "repair"].includes(activeTool) ? "workspace__mask-overlay--interactive" : ""}`}
               height={document.canvas.height}
+              onClick={handleOverlayClick}
               width={document.canvas.width}
             />
           </div>

@@ -410,6 +410,8 @@ export function EditorWorkspace() {
     setCanvasDisplayBackground,
     setCanvasViewport,
     setRepairBrushSize,
+    setRepairGuidePreviewEnabled,
+    setRepairToolMode,
     setImageCropAspect,
     setSelectedLayerIds,
     startRepairSession,
@@ -417,6 +419,7 @@ export function EditorWorkspace() {
     toggleLayerLock,
     toggleLayerVisibility,
     clearRepairSession,
+    undoRepairStroke,
     cancelCropSession,
     undo,
     updateAiExpandPrompt,
@@ -470,7 +473,9 @@ export function EditorWorkspace() {
   );
   const showCropProperties = activeTool === "crop" && selectedImageLayer !== null;
   const activeToolNeedsImageLayer = IMAGE_REQUIRED_TOOLS.includes(activeTool);
-  const hasRepairMask = Boolean(activeRepairSession?.strokes.some((stroke) => stroke.points.length > 1));
+  const hasRepairMask = Boolean(
+    activeRepairSession?.strokes.some((stroke) => stroke.mode === "paint" && stroke.points.length > 0)
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -999,20 +1004,69 @@ export function EditorWorkspace() {
           <div className="workspace__property-list">
             {!aiConfigured ? (
               <p className="workspace__warning">
-                AI 配置未完成。请先设置 `VITE_AI_BASE_URL`、`VITE_AI_API_KEY` 和支持调整的模型。
+                AI 配置未完成，请检查 `VITE_AI_BASE_URL`、`VITE_AI_API_KEY` 和图像模型设置。
               </p>
             ) : null}
+            <div className="workspace__property">
+              <div className="workspace__property-label">选择模式</div>
+              <div className="workspace__inline-actions">
+                <button
+                  className={`workspace__action-button ${activeRepairSession?.toolMode !== "eraser" ? "is-active" : ""}`}
+                  onClick={() => setRepairToolMode("brush")}
+                  type="button"
+                >
+                  画笔
+                </button>
+                <button
+                  className={`workspace__action-button ${activeRepairSession?.toolMode === "eraser" ? "is-active" : ""}`}
+                  onClick={() => setRepairToolMode("eraser")}
+                  type="button"
+                >
+                  橡皮擦
+                </button>
+                <button
+                  className={`workspace__action-button ${activeRepairSession?.guidePreviewEnabled !== false ? "is-active" : ""}`}
+                  onClick={() =>
+                    setRepairGuidePreviewEnabled(!(activeRepairSession?.guidePreviewEnabled !== false))
+                  }
+                  type="button"
+                >
+                  预览引导
+                </button>
+              </div>
+            </div>
             <label className="workspace__property">
-              <span className="workspace__property-label">调整提示词</span>
+              <span className="workspace__property-label">画笔大小</span>
+              <input
+                className="workspace__range"
+                max={120}
+                min={6}
+                onChange={(event) => setRepairBrushSize(Number(event.target.value))}
+                step={1}
+                type="range"
+                value={activeRepairSession?.brushSize ?? 24}
+              />
+              <div className="workspace__property-value">{activeRepairSession?.brushSize ?? 24}px</div>
+            </label>
+            <label className="workspace__property">
+              <span className="workspace__property-label">提示词</span>
               <textarea
                 className="workspace__text-area"
                 onChange={(event) => updateRepairPrompt(selectedImageLayer.id, event.target.value)}
-                placeholder="描述您想要的局部修改，例如：移除水印、替换logo、调整破损边缘。"
+                placeholder="描述你希望重绘区域变成什么样子，例如：蓝天、草地、建筑物等。"
                 rows={4}
                 value={selectedImageLayer.aiMeta.repairPrompt}
               />
             </label>
             <div className="workspace__inline-actions">
+              <button
+                className="workspace__action-button"
+                disabled={!activeRepairSession || activeRepairSession.isSubmitting || activeRepairSession.strokes.length === 0}
+                onClick={() => undoRepairStroke()}
+                type="button"
+              >
+                撤销描边
+              </button>
               <button
                 className="workspace__action-button"
                 disabled={!activeRepairSession || activeRepairSession.isSubmitting || !hasRepairMask}
@@ -1023,14 +1077,7 @@ export function EditorWorkspace() {
               </button>
               <button
                 className="workspace__action-button"
-                disabled={
-                  aiBusy !== null ||
-                  !aiConfigured ||
-                  !activeRepairSession ||
-                  activeRepairSession.isSubmitting ||
-                  !hasRepairMask ||
-                  !selectedImageLayer.aiMeta.repairPrompt.trim()
-                }
+                disabled={aiBusy !== null || !aiConfigured || !activeRepairSession || activeRepairSession.isSubmitting || !hasRepairMask}
                 onClick={() => void handleAiRepair()}
                 type="button"
               >
@@ -1038,11 +1085,11 @@ export function EditorWorkspace() {
               </button>
             </div>
             <p className="workspace__footer-note">
-              在画布上框选需要修改的区域，然后在提示词中描述编辑内容。图片其余部分将作为模型的上下文参考。
+              编辑器会自动将绘制区域转换为高亮引导图，并生成结构化提示词，仅编辑标记区域。仅在特殊限制时使用额外引导。
             </p>
             {repairTask.status !== "idle" ? (
               <p className="workspace__footer-note">
-                重绘状态: {repairTask.status}
+                重绘状态：{repairTask.status}
                 {repairTask.taskId ? ` (${repairTask.taskId})` : ""}
               </p>
             ) : null}
@@ -1185,7 +1232,7 @@ export function EditorWorkspace() {
                   onClick={() => void handleAi3d()}
                   type="button"
                 >
-                  {(task.status === "pending" || task.status === "running") ? "创作中..." : "开始立体创作"}
+                  {(task.status === "pending" || task.status === "running") ? "创作中..." : (task.status === "succeeded" && task.downloadUrl ? "重新生成3D模型" : "开始立体创作")}
                 </button>
               </div>
               {task.status === "pending" ? (
@@ -1217,7 +1264,7 @@ export function EditorWorkspace() {
                   </button>
                 </div>
               ) : null}
-              {lastAiError ? (
+              {lastAiError && task.status !== "succeeded" && !task.downloadUrl ? (
                 <p className="workspace__warning">{lastAiError}</p>
               ) : null}
               {task.taskId ? (

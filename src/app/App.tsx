@@ -24,6 +24,19 @@ export function App() {
     return () => window.removeEventListener(EXPORT_STATE_EVENT, handleExportState as EventListener);
   }, []);
 
+  useEffect(() => {
+    const handleWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      window.removeEventListener('wheel', handleWheel);
+    };
+  }, []);
+
   const handleExportRequest = () => {
     window.dispatchEvent(new CustomEvent(OPEN_EXPORT_DIALOG_EVENT));
   };

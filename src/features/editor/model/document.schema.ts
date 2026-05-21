@@ -104,7 +104,11 @@ const imageLayerSchema = layerBaseSchema.extend({
   aiMeta: z.object({
     prompt: z.string(),
     expandPrompt: z.string(),
-    repairPrompt: z.string().default(""),
+    repairPrompt: z
+      .string()
+      .default(
+        "仅移除高亮标记的水印。保持所有未高亮内容不变，并保留产品边缘、主体细节、光线和色调。"
+      ),
     lastAiAction: z.enum(["seed3d", "outpaint", "repair"]).nullable(),
     lastAiRequestedAt: z.string().nullable(),
     lastAiSucceededAt: z.string().nullable(),
