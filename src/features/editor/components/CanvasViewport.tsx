@@ -70,6 +70,10 @@ type LayerCanvasObject = {
 
 type CropHandle = "move" | "n" | "e" | "s" | "w" | "nw" | "ne" | "sw" | "se" | null;
 type DocumentRect = { x: number; y: number; width: number; height: number };
+type CropPreviewBounds = {
+  imageBounds: DocumentRect;
+  cropBounds: DocumentRect;
+};
 type SafeAreaHintLayout = {
   cardRect: DocumentRect;
   closeButtonRect: DocumentRect;
@@ -94,6 +98,27 @@ function clampZoom(zoom: number) {
 
 function isDirectManipulationTool(activeTool: EditorTool) {
   return ["crop", "doodle", "repair"].includes(activeTool);
+}
+
+function getCursorForCropHandle(handle: CropHandle) {
+  switch (handle) {
+    case "n":
+    case "s":
+      return "ns-resize";
+    case "e":
+    case "w":
+      return "ew-resize";
+    case "nw":
+    case "se":
+      return "nwse-resize";
+    case "ne":
+    case "sw":
+      return "nesw-resize";
+    case "move":
+      return "move";
+    default:
+      return "crosshair";
+  }
 }
 
 function resolveCanvasCursor(activeTool: EditorTool, isPanning: boolean) {
@@ -225,28 +250,37 @@ function isPointInDocumentRect(point: DoodlePoint, rect: DocumentRect | null) {
 function getCropPreviewBounds(layer: ImageLayer, crop: ImageCrop) {
   const scaleX = layer.transform.scaleX || 1;
   const scaleY = layer.transform.scaleY || 1;
-  
+  const imageX = layer.transform.x - layer.crop.x * scaleX;
+  const imageY = layer.transform.y - layer.crop.y * scaleY;
+  const imageWidth = layer.originalWidth * scaleX;
+  const imageHeight = layer.originalHeight * scaleY;
+
   return {
-    imageX: layer.transform.x,
-    imageY: layer.transform.y,
-    imageWidth: layer.originalWidth * scaleX,
-    imageHeight: layer.originalHeight * scaleY,
-    cropX: layer.transform.x + crop.x * scaleX,
-    cropY: layer.transform.y + crop.y * scaleY,
-    cropWidth: crop.width * scaleX,
-    cropHeight: crop.height * scaleY
+    imageBounds: {
+      x: imageX,
+      y: imageY,
+      width: imageWidth,
+      height: imageHeight
+    },
+    cropBounds: {
+      x: imageX + crop.x * scaleX,
+      y: imageY + crop.y * scaleY,
+      width: crop.width * scaleX,
+      height: crop.height * scaleY
+    }
   };
 }
 
-function resolveCropHandle(docPoint: DoodlePoint, bounds: ReturnType<typeof getCropPreviewBounds>): CropHandle {
+function resolveCropHandle(docPoint: DoodlePoint, bounds: CropPreviewBounds): CropHandle {
   const edgeTolerance = 12;
   const cornerTolerance = 14;
-  const withinX = docPoint.x >= bounds.cropX && docPoint.x <= bounds.cropX + bounds.cropWidth;
-  const withinY = docPoint.y >= bounds.cropY && docPoint.y <= bounds.cropY + bounds.cropHeight;
-  const nearLeft = Math.abs(docPoint.x - bounds.cropX) <= edgeTolerance;
-  const nearRight = Math.abs(docPoint.x - (bounds.cropX + bounds.cropWidth)) <= edgeTolerance;
-  const nearTop = Math.abs(docPoint.y - bounds.cropY) <= edgeTolerance;
-  const nearBottom = Math.abs(docPoint.y - (bounds.cropY + bounds.cropHeight)) <= edgeTolerance;
+  const { cropBounds } = bounds;
+  const withinX = docPoint.x >= cropBounds.x && docPoint.x <= cropBounds.x + cropBounds.width;
+  const withinY = docPoint.y >= cropBounds.y && docPoint.y <= cropBounds.y + cropBounds.height;
+  const nearLeft = Math.abs(docPoint.x - cropBounds.x) <= edgeTolerance;
+  const nearRight = Math.abs(docPoint.x - (cropBounds.x + cropBounds.width)) <= edgeTolerance;
+  const nearTop = Math.abs(docPoint.y - cropBounds.y) <= edgeTolerance;
+  const nearBottom = Math.abs(docPoint.y - (cropBounds.y + cropBounds.height)) <= edgeTolerance;
 
   if (nearLeft && nearTop) return "nw";
   if (nearRight && nearTop) return "ne";
@@ -260,10 +294,10 @@ function resolveCropHandle(docPoint: DoodlePoint, bounds: ReturnType<typeof getC
   if (
     withinX &&
     withinY &&
-    docPoint.x >= bounds.cropX + cornerTolerance &&
-    docPoint.x <= bounds.cropX + bounds.cropWidth - cornerTolerance &&
-    docPoint.y >= bounds.cropY + cornerTolerance &&
-    docPoint.y <= bounds.cropY + bounds.cropHeight - cornerTolerance
+    docPoint.x >= cropBounds.x + cornerTolerance &&
+    docPoint.x <= cropBounds.x + cropBounds.width - cornerTolerance &&
+    docPoint.y >= cropBounds.y + cornerTolerance &&
+    docPoint.y <= cropBounds.y + cropBounds.height - cornerTolerance
   ) {
     return "move";
   }
@@ -306,16 +340,79 @@ function drawCropOverlay(
   viewport: EditorDocument["canvas"]["viewport"]
 ) {
   const bounds = getCropPreviewBounds(layer, crop);
+  const { imageBounds, cropBounds } = bounds;
+  const handleSize = 10;
+  const edgeHandleLength = 28;
+  const halfHandle = handleSize / 2;
+  const handleRects: DocumentRect[] = [
+    { x: cropBounds.x - halfHandle, y: cropBounds.y - halfHandle, width: handleSize, height: handleSize },
+    { x: cropBounds.x + cropBounds.width / 2 - edgeHandleLength / 2, y: cropBounds.y - halfHandle, width: edgeHandleLength, height: handleSize },
+    { x: cropBounds.x + cropBounds.width - halfHandle, y: cropBounds.y - halfHandle, width: handleSize, height: handleSize },
+    { x: cropBounds.x + cropBounds.width - halfHandle, y: cropBounds.y + cropBounds.height / 2 - edgeHandleLength / 2, width: handleSize, height: edgeHandleLength },
+    { x: cropBounds.x + cropBounds.width - halfHandle, y: cropBounds.y + cropBounds.height - halfHandle, width: handleSize, height: handleSize },
+    { x: cropBounds.x + cropBounds.width / 2 - edgeHandleLength / 2, y: cropBounds.y + cropBounds.height - halfHandle, width: edgeHandleLength, height: handleSize },
+    { x: cropBounds.x - halfHandle, y: cropBounds.y + cropBounds.height - halfHandle, width: handleSize, height: handleSize },
+    { x: cropBounds.x - halfHandle, y: cropBounds.y + cropBounds.height / 2 - edgeHandleLength / 2, width: handleSize, height: edgeHandleLength }
+  ];
 
   context.save();
   context.setTransform(viewport.zoom, 0, 0, viewport.zoom, viewport.panX, viewport.panY);
   context.fillStyle = "rgba(28, 37, 32, 0.28)";
-  context.fillRect(bounds.imageX, bounds.imageY, bounds.imageWidth, bounds.imageHeight);
-  context.clearRect(bounds.cropX, bounds.cropY, bounds.cropWidth, bounds.cropHeight);
+  context.fillRect(imageBounds.x, imageBounds.y, imageBounds.width, imageBounds.height);
+  context.clearRect(cropBounds.x, cropBounds.y, cropBounds.width, cropBounds.height);
   context.strokeStyle = "#cd5c2d";
   context.lineWidth = 2;
-  context.strokeRect(bounds.cropX, bounds.cropY, bounds.cropWidth, bounds.cropHeight);
+  context.strokeRect(cropBounds.x, cropBounds.y, cropBounds.width, cropBounds.height);
+  context.fillStyle = "#fff7f0";
+  handleRects.forEach((rect) => {
+    context.fillRect(rect.x, rect.y, rect.width, rect.height);
+    context.strokeRect(rect.x, rect.y, rect.width, rect.height);
+  });
   context.restore();
+}
+
+function computeCropDraftFromPointer(
+  layer: ImageLayer,
+  handle: Exclude<CropHandle, null>,
+  startPoint: DoodlePoint,
+  docPoint: DoodlePoint,
+  startCrop: ImageCrop
+) {
+  const deltaX = (docPoint.x - startPoint.x) / (layer.transform.scaleX || 1);
+  const deltaY = (docPoint.y - startPoint.y) / (layer.transform.scaleY || 1);
+  const minLeft = 0;
+  const minTop = 0;
+  const maxRight = layer.originalWidth;
+  const maxBottom = layer.originalHeight;
+  const right = startCrop.x + startCrop.width;
+  const bottom = startCrop.y + startCrop.height;
+
+  if (handle === "move") {
+    return {
+      x: Math.round(startCrop.x + deltaX),
+      y: Math.round(startCrop.y + deltaY)
+    } satisfies Partial<ImageCrop>;
+  }
+
+  const nextLeft = ["w", "nw", "sw"].includes(handle)
+    ? clamp(Math.round(startCrop.x + deltaX), minLeft, right - 1)
+    : startCrop.x;
+  const nextTop = ["n", "nw", "ne"].includes(handle)
+    ? clamp(Math.round(startCrop.y + deltaY), minTop, bottom - 1)
+    : startCrop.y;
+  const nextRight = ["e", "ne", "se"].includes(handle)
+    ? clamp(Math.round(right + deltaX), nextLeft + 1, maxRight)
+    : right;
+  const nextBottom = ["s", "sw", "se"].includes(handle)
+    ? clamp(Math.round(bottom + deltaY), nextTop + 1, maxBottom)
+    : bottom;
+
+  return {
+    x: nextLeft,
+    y: nextTop,
+    width: nextRight - nextLeft,
+    height: nextBottom - nextTop
+  } satisfies Partial<ImageCrop>;
 }
 
 function drawRepairStroke(
@@ -563,6 +660,7 @@ export function CanvasViewport({
   const panSessionRef = useRef({ isPanning: false, lastX: 0, lastY: 0 });
   const drawSessionRef = useRef({ mode: null as "doodle" | "crop" | "repair" | null });
   const doodlePointsRef = useRef<DoodlePoint[]>([]);
+  const cropHoverHandleRef = useRef<CropHandle>(null);
   const cropDragRef = useRef<{ handle: CropHandle; startPoint: DoodlePoint; startCrop: ImageCrop | null }>({
     handle: null,
     startPoint: { x: 0, y: 0 },
@@ -574,6 +672,84 @@ export function CanvasViewport({
     height: document.canvas.height,
     ...getCanvasSurfaceStyle(document)
   };
+
+  const updateOverlayCursor = useCallback((handle: CropHandle = null) => {
+    const overlay = overlayRef.current;
+
+    if (!overlay) {
+      return;
+    }
+
+    if (activeToolRef.current === "crop") {
+      overlay.style.cursor = getCursorForCropHandle(handle);
+      return;
+    }
+
+    overlay.style.cursor = resolveCanvasCursor(activeToolRef.current, panSessionRef.current.isPanning);
+  }, []);
+
+  const resolveActiveCropHandle = useCallback((docPoint: DoodlePoint) => {
+    const currentSelectedImageLayer = selectedImageLayerRef.current;
+    const currentCropSession = cropSessionRef.current;
+
+    if (
+      activeToolRef.current !== "crop" ||
+      !currentSelectedImageLayer ||
+      !currentCropSession ||
+      currentCropSession.layerId !== currentSelectedImageLayer.id
+    ) {
+      return null;
+    }
+
+    return resolveCropHandle(docPoint, getCropPreviewBounds(currentSelectedImageLayer, currentCropSession.draft));
+  }, []);
+
+  const startCropDrag = useCallback((docPoint: DoodlePoint) => {
+    const currentCropSession = cropSessionRef.current;
+    const handle = resolveActiveCropHandle(docPoint);
+
+    if (!currentCropSession || !handle) {
+      return false;
+    }
+
+    drawSessionRef.current.mode = "crop";
+    cropDragRef.current = { handle, startPoint: docPoint, startCrop: currentCropSession.draft };
+    cropHoverHandleRef.current = handle;
+    updateOverlayCursor(handle);
+    return true;
+  }, [resolveActiveCropHandle, updateOverlayCursor]);
+
+  const updateCropDrag = useCallback((docPoint: DoodlePoint) => {
+    const currentSelectedImageLayer = selectedImageLayerRef.current;
+    const activeDrag = cropDragRef.current;
+
+    if (
+      drawSessionRef.current.mode !== "crop" ||
+      activeToolRef.current !== "crop" ||
+      !currentSelectedImageLayer ||
+      !activeDrag.handle ||
+      !activeDrag.startCrop
+    ) {
+      return false;
+    }
+
+    onCropSessionChangeRef.current(
+      computeCropDraftFromPointer(
+        currentSelectedImageLayer,
+        activeDrag.handle,
+        activeDrag.startPoint,
+        docPoint,
+        activeDrag.startCrop
+      )
+    );
+    return true;
+  }, []);
+
+  const refreshCropHoverCursor = useCallback((docPoint: DoodlePoint) => {
+    const handle = resolveActiveCropHandle(docPoint);
+    cropHoverHandleRef.current = handle;
+    updateOverlayCursor(handle);
+  }, [resolveActiveCropHandle, updateOverlayCursor]);
 
   const handleOverlayClick = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     const pointer = { x: event.clientX, y: event.clientY };
@@ -644,13 +820,9 @@ export function CanvasViewport({
       cropSessionRef.current &&
       cropSessionRef.current.layerId === currentSelectedImageLayer.id
     ) {
-      const handle = resolveCropHandle(docPoint, getCropPreviewBounds(currentSelectedImageLayer, cropSessionRef.current.draft));
-      if (handle) {
-        drawSessionRef.current.mode = "crop";
-        cropDragRef.current = { handle, startPoint: docPoint, startCrop: cropSessionRef.current.draft };
-      }
+      startCropDrag(docPoint);
     }
-  }, []);
+  }, [startCropDrag]);
 
   const handleOverlayMouseMove = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     const pointer = getPointerClientPosition(event.nativeEvent);
@@ -675,32 +847,14 @@ export function CanvasViewport({
       return;
     }
 
-    if (
-      drawSessionRef.current.mode === "crop" &&
-      activeToolRef.current === "crop" &&
-      selectedImageLayerRef.current &&
-      cropDragRef.current.handle &&
-      cropDragRef.current.startCrop
-    ) {
-      const deltaX = (docPoint.x - cropDragRef.current.startPoint.x) / selectedImageLayerRef.current.transform.scaleX;
-      const deltaY = (docPoint.y - cropDragRef.current.startPoint.y) / selectedImageLayerRef.current.transform.scaleY;
-      const startCrop = cropDragRef.current.startCrop;
-      const right = startCrop.x + startCrop.width;
-      const bottom = startCrop.y + startCrop.height;
-
-      if (cropDragRef.current.handle === "move") {
-        onCropSessionChangeRef.current({ x: Math.round(startCrop.x + deltaX), y: Math.round(startCrop.y + deltaY) });
-        return;
-      }
-
-      const nextLeft = ["w", "nw", "sw"].includes(cropDragRef.current.handle) ? Math.round(startCrop.x + deltaX) : startCrop.x;
-      const nextTop = ["n", "nw", "ne"].includes(cropDragRef.current.handle) ? Math.round(startCrop.y + deltaY) : startCrop.y;
-      const nextRight = ["e", "ne", "se"].includes(cropDragRef.current.handle) ? Math.round(right + deltaX) : right;
-      const nextBottom = ["s", "sw", "se"].includes(cropDragRef.current.handle) ? Math.round(bottom + deltaY) : bottom;
-
-      onCropSessionChangeRef.current({ x: nextLeft, y: nextTop, width: nextRight - nextLeft, height: nextBottom - nextTop });
+    if (updateCropDrag(docPoint)) {
+      return;
     }
-  }, []);
+
+    if (activeToolRef.current === "crop") {
+      refreshCropHoverCursor(docPoint);
+    }
+  }, [refreshCropHoverCursor, updateCropDrag]);
 
   const handleOverlayMouseUp = useCallback(() => {
     if (panSessionRef.current.isPanning) {
@@ -723,8 +877,10 @@ export function CanvasViewport({
     drawSessionRef.current.mode = null;
     doodlePointsRef.current = [];
     cropDragRef.current = { handle: null, startPoint: { x: 0, y: 0 }, startCrop: null };
+    cropHoverHandleRef.current = null;
+    updateOverlayCursor(null);
     renderOverlay();
-  }, []);
+  }, [updateOverlayCursor]);
 
   const handleOverlayTouchStart = useCallback((event: React.TouchEvent<HTMLCanvasElement>) => {
     if (event.touches.length > 0) {
@@ -820,6 +976,7 @@ export function CanvasViewport({
     onDoodleCommitRef.current = onDoodleCommit;
     onRepairStrokeCommitRef.current = onRepairStrokeCommit;
     onCropSessionChangeRef.current = onCropSessionChange;
+    updateOverlayCursor(cropHoverHandleRef.current);
     renderOverlay();
   }, [
     activeTool,
@@ -832,7 +989,8 @@ export function CanvasViewport({
     onTextChange,
     onTransformChange,
     onViewportChange,
-    selectedImageLayer
+    selectedImageLayer,
+    updateOverlayCursor
   ]);
 
   useEffect(() => {
@@ -947,14 +1105,9 @@ export function CanvasViewport({
         cropSessionRef.current &&
         cropSessionRef.current.layerId === currentSelectedImageLayer.id
       ) {
-        const handle = resolveCropHandle(docPoint, getCropPreviewBounds(currentSelectedImageLayer, cropSessionRef.current.draft));
-
-        if (!handle) {
+        if (!startCropDrag(docPoint)) {
           return;
         }
-
-        drawSessionRef.current.mode = "crop";
-        cropDragRef.current = { handle, startPoint: docPoint, startCrop: cropSessionRef.current.draft };
       }
     };
 
@@ -998,30 +1151,12 @@ export function CanvasViewport({
         return;
       }
 
-      if (
-        drawSessionRef.current.mode === "crop" &&
-        currentTool === "crop" &&
-        currentSelectedImageLayer &&
-        cropDragRef.current.handle &&
-        cropDragRef.current.startCrop
-      ) {
-        const deltaX = (docPoint.x - cropDragRef.current.startPoint.x) / currentSelectedImageLayer.transform.scaleX;
-        const deltaY = (docPoint.y - cropDragRef.current.startPoint.y) / currentSelectedImageLayer.transform.scaleY;
-        const startCrop = cropDragRef.current.startCrop;
-        const right = startCrop.x + startCrop.width;
-        const bottom = startCrop.y + startCrop.height;
+      if (updateCropDrag(docPoint)) {
+        return;
+      }
 
-        if (cropDragRef.current.handle === "move") {
-          onCropSessionChangeRef.current({ x: Math.round(startCrop.x + deltaX), y: Math.round(startCrop.y + deltaY) });
-          return;
-        }
-
-        const nextLeft = ["w", "nw", "sw"].includes(cropDragRef.current.handle) ? Math.round(startCrop.x + deltaX) : startCrop.x;
-        const nextTop = ["n", "nw", "ne"].includes(cropDragRef.current.handle) ? Math.round(startCrop.y + deltaY) : startCrop.y;
-        const nextRight = ["e", "ne", "se"].includes(cropDragRef.current.handle) ? Math.round(right + deltaX) : right;
-        const nextBottom = ["s", "sw", "se"].includes(cropDragRef.current.handle) ? Math.round(bottom + deltaY) : bottom;
-
-        onCropSessionChangeRef.current({ x: nextLeft, y: nextTop, width: nextRight - nextLeft, height: nextBottom - nextTop });
+      if (currentTool === "crop") {
+        refreshCropHoverCursor(docPoint);
       }
     };
 
@@ -1076,6 +1211,8 @@ export function CanvasViewport({
       drawSessionRef.current.mode = null;
       doodlePointsRef.current = [];
       cropDragRef.current = { handle: null, startPoint: { x: 0, y: 0 }, startCrop: null };
+      cropHoverHandleRef.current = null;
+      updateOverlayCursor(null);
       renderOverlay();
     };
 
@@ -1102,7 +1239,15 @@ export function CanvasViewport({
       runtime.dispose();
       runtimeRef.current = null;
     };
-  }, [document.canvas.backgroundColor, document.canvas.height, document.canvas.width]);
+  }, [
+    document.canvas.backgroundColor,
+    document.canvas.height,
+    document.canvas.width,
+    refreshCropHoverCursor,
+    startCropDrag,
+    updateCropDrag,
+    updateOverlayCursor
+  ]);
 
   useEffect(() => {
     const runtime = runtimeRef.current;
@@ -1116,12 +1261,14 @@ export function CanvasViewport({
 
     const directManipulation = isDirectManipulationTool(activeTool);
     syncCanvasInteractionMode(runtime, documentRef.current, activeTool);
+    cropHoverHandleRef.current = null;
+    updateOverlayCursor(null);
 
     if (directManipulation) {
       runtime.discardActiveObject();
       runtime.requestRenderAll();
     }
-  }, [activeTool]);
+  }, [activeTool, updateOverlayCursor]);
 
   useEffect(() => {
     const runtime = runtimeRef.current;
@@ -1177,21 +1324,23 @@ export function CanvasViewport({
     <div className="workspace__viewport-shell">
       <div className="workspace__viewport-inner">
         <div className="workspace__viewport-board">
-          <div className="workspace__canvas-stack workspace__canvas-surface" style={canvasSurfaceStyle}>
-            <canvas ref={canvasRef} className="workspace__canvas" height={document.canvas.height} width={document.canvas.width} />
-            <canvas
-              ref={overlayRef}
-              className={`workspace__mask-overlay ${["doodle", "crop", "repair"].includes(activeTool) ? "workspace__mask-overlay--interactive" : ""}`}
-              height={document.canvas.height}
-              onClick={handleOverlayClick}
-              onMouseDown={handleOverlayMouseDown}
-              onMouseMove={handleOverlayMouseMove}
-              onMouseUp={handleOverlayMouseUp}
-              onTouchStart={handleOverlayTouchStart}
-              onTouchMove={handleOverlayTouchMove}
-              onTouchEnd={handleOverlayTouchEnd}
-              width={document.canvas.width}
-            />
+          <div className="workspace__canvas-surface">
+            <div className="workspace__canvas-stack" style={canvasSurfaceStyle}>
+              <canvas ref={canvasRef} className="workspace__canvas" height={document.canvas.height} width={document.canvas.width} />
+              <canvas
+                ref={overlayRef}
+                className={`workspace__mask-overlay ${["doodle", "crop", "repair"].includes(activeTool) ? "workspace__mask-overlay--interactive" : ""}`}
+                height={document.canvas.height}
+                onClick={handleOverlayClick}
+                onMouseDown={handleOverlayMouseDown}
+                onMouseMove={handleOverlayMouseMove}
+                onMouseUp={handleOverlayMouseUp}
+                onTouchStart={handleOverlayTouchStart}
+                onTouchMove={handleOverlayTouchMove}
+                onTouchEnd={handleOverlayTouchEnd}
+                width={document.canvas.width}
+              />
+            </div>
           </div>
         </div>
       </div>

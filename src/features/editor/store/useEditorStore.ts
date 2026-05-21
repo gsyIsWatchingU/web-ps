@@ -502,8 +502,8 @@ function createDoodleLayer(
     opacity: 1,
     zIndex,
     transform: {
-      x: Math.round(minX),
-      y: Math.round(minY),
+      x: minX,
+      y: minY,
       scaleX: 1,
       scaleY: 1,
       rotation: 0,

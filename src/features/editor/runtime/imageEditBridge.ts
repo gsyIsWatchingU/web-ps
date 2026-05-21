@@ -214,8 +214,8 @@ function getCanvasContext(canvas: HTMLCanvasElement, errorMessage: string) {
 function mapStrokePointToCrop(layer: ImageLayer, point: RepairStroke["points"][number]) {
   const scaleX = layer.transform.scaleX || 1;
   const scaleY = layer.transform.scaleY || 1;
-  const imageX = (point.x - layer.transform.x) / scaleX + layer.crop.x;
-  const imageY = (point.y - layer.transform.y) / scaleY + layer.crop.y;
+  const imageX = (point.x - layer.transform.x) / scaleX;
+  const imageY = (point.y - layer.transform.y) / scaleY;
 
   return {
     x: imageX - layer.crop.x,
@@ -678,7 +678,7 @@ async function runGuidedRepaintTask({
   }
 
   const providerModel = model || aiConfig.repairModel || aiConfig.model;
-  const response = await fetch(getRepairGenerationEndpoint(), {
+  const response = await fetch(getImageGenerationEndpoint(), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${aiConfig.apiKey}`,
@@ -686,14 +686,13 @@ async function runGuidedRepaintTask({
     },
     body: JSON.stringify({
       model: providerModel,
-      content: [
-        { type: "text", text: prompt.trim() },
-        { type: "image_url", image_url: { url: imageDataUrl } },
-        { type: "image_url", image_url: { url: guideDataUrl } }
-      ],
-      parameters: {
-        n: 1
-      }
+      prompt: prompt.trim(),
+      image: [imageDataUrl, guideDataUrl],
+      sequential_image_generation: "disabled",
+      response_format: "url",
+      size: "2K",
+      stream: false,
+      watermark: true
     })
   });
 
@@ -724,7 +723,7 @@ async function runGuidedRepaintTask({
   }
 
   if (taskId) {
-    return pollGuidedRepairTask(taskId, providerModel);
+    return pollImageEditTask(taskId);
   }
 
   return {

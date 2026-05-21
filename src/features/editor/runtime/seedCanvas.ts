@@ -232,7 +232,7 @@ function createDecorationObject(layer: DecorationLayer) {
 }
 
 function createDoodleObject(layer: DoodleLayer) {
-  return new Polyline(layer.points, {
+  const polyline = new Polyline(layer.points, {
     fill: "",
     stroke: layer.stroke,
     strokeWidth: layer.strokeWidth,
@@ -240,6 +240,13 @@ function createDoodleObject(layer: DoodleLayer) {
     strokeLineJoin: "round",
     objectCaching: false
   });
+  
+  polyline.set({
+    left: layer.transform.x,
+    top: layer.transform.y
+  });
+  
+  return polyline;
 }
 
 export async function seedCanvas(
