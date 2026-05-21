@@ -80,23 +80,23 @@ function buildSeed3DErrorMessage(payloadMessage: string | undefined, fallbackMes
   const normalized = rawMessage?.toLowerCase() ?? "";
 
   if (normalized.includes("access denied") || normalized.includes("forbidden") || normalized.includes("quota")) {
-    return `AI3D 当前不可用：账号权限不足或额度超限，请检查 API Key 和账户状态。原始错误：${rawMessage}`;
+    return `立体创作当前不可用：账号权限不足或额度超限，请检查 API Key 和账户状态。原始错误：${rawMessage}`;
   }
 
   if (normalized.includes("unauthorized") || normalized.includes("invalid api key") || normalized.includes("api key")) {
-    return `AI3D 当前不可用：API Key 无效，请检查 .env 中的 VITE_AI_API_KEY 配置。原始错误：${rawMessage}`;
+    return `立体创作当前不可用：API Key 无效，请检查 .env 中的 VITE_AI_API_KEY 配置。原始错误：${rawMessage}`;
   }
 
   if (normalized.includes("insufficient balance") || normalized.includes("余额")) {
-    return "AI3D 当前不可用：账户余额不足，请充值后重试。";
+    return "立体创作当前不可用：账户余额不足，请充值后重试。";
   }
 
   if (normalized.includes("timeout")) {
-    return "AI3D 处理超时，请稍后重试。";
+    return "立体创作处理超时，请稍后重试。";
   }
 
   if (normalized.includes("network") || normalized.includes("failed to fetch")) {
-    return "AI3D 请求失败：网络连接异常，暂时无法访问模型服务。";
+    return "立体创作请求失败：网络连接异常，暂时无法访问模型服务。";
   }
 
   if (rawMessage) {
@@ -109,7 +109,7 @@ function buildSeed3DErrorMessage(payloadMessage: string | undefined, fallbackMes
 function normalizeTaskStatus(providerStatus: string): Seed3DTaskResult["status"] {
   const normalized = providerStatus.toLowerCase();
   
-  if (normalized.includes("succeeded") || normalized.includes("completed")) {
+  if (normalized.includes("succeeded") || normalized.includes("completed") || normalized.includes("success")) {
     return "succeeded";
   }
   
@@ -181,7 +181,7 @@ export async function createSeed3dTask(imageUrl: string, prompt: string): Promis
       throw new Error(
         buildSeed3DErrorMessage(
           payload.message || payload.code,
-          `AI3D 任务创建失败（${response.status}）。`
+          `立体创作任务创建失败（${response.status}）。`
         )
       );
     }
@@ -189,7 +189,7 @@ export async function createSeed3dTask(imageUrl: string, prompt: string): Promis
     const taskId = payload.id || payload.task_id;
 
     if (!taskId) {
-      throw new Error("AI3D 任务创建成功，但没有返回任务 ID。");
+      throw new Error("立体创作任务创建成功，但没有返回任务 ID。");
     }
 
     return {
@@ -207,7 +207,7 @@ export async function createSeed3dTask(imageUrl: string, prompt: string): Promis
       downloadUrl: null,
       fileName: null,
       providerModel: null,
-      errorMessage: error instanceof Error ? error.message : "AI3D 任务创建失败。"
+      errorMessage: error instanceof Error ? error.message : "立体创作任务创建失败。"
     };
   }
 }
@@ -242,7 +242,7 @@ export async function pollSeed3dTask(taskId: string): Promise<Seed3DTaskResult> 
         throw new Error(
           buildSeed3DErrorMessage(
             payload.message || payload.code || payload.task?.error_message || payload.task?.error_code,
-            `AI3D 任务查询失败（${response.status}）。`
+            `立体创作任务查询失败（${response.status}）。`
           )
         );
       }
@@ -250,7 +250,7 @@ export async function pollSeed3dTask(taskId: string): Promise<Seed3DTaskResult> 
       const providerStatus = payload.status ?? payload.task?.status ?? "";
       
       if (!providerStatus) {
-        throw new Error("AI3D 任务查询失败，未返回任务信息。");
+        throw new Error("立体创作任务查询失败，未返回任务信息。");
       }
 
       const status = normalizeTaskStatus(providerStatus);
@@ -265,7 +265,7 @@ export async function pollSeed3dTask(taskId: string): Promise<Seed3DTaskResult> 
       if (status === "succeeded") {
         
         if (!resultUrl) {
-          throw new Error("AI3D 任务成功，但没有返回结果文件。");
+          throw new Error("立体创作任务成功，但没有返回结果文件。");
         }
 
         return {
@@ -282,7 +282,7 @@ export async function pollSeed3dTask(taskId: string): Promise<Seed3DTaskResult> 
         throw new Error(
           buildSeed3DErrorMessage(
             payload.error_message || payload.error_code || payload.task?.error_message || payload.task?.error_code,
-            `AI3D 任务失败，状态：${providerStatus}。`
+            `立体创作任务失败，状态：${providerStatus}。`
           )
         );
       }
@@ -290,7 +290,7 @@ export async function pollSeed3dTask(taskId: string): Promise<Seed3DTaskResult> 
       await wait(2000);
     }
 
-    throw new Error("AI3D 处理超时，请稍后重试。");
+    throw new Error("立体创作处理超时，请稍后重试。");
   } catch (error) {
     return {
       taskId,
@@ -298,7 +298,7 @@ export async function pollSeed3dTask(taskId: string): Promise<Seed3DTaskResult> 
       downloadUrl: null,
       fileName: null,
       providerModel: aiConfig.model,
-      errorMessage: error instanceof Error ? error.message : "AI3D 任务轮询失败。"
+      errorMessage: error instanceof Error ? error.message : "立体创作任务轮询失败。"
     };
   }
 }
@@ -317,7 +317,7 @@ export async function runSeed3dTask(imageUrl: string, prompt: string): Promise<S
       downloadUrl: null,
       fileName: null,
       providerModel: null,
-      errorMessage: "AI3D 任务创建失败，未获取到任务 ID。"
+      errorMessage: "立体创作任务创建失败，未获取到任务 ID。"
     };
   }
 

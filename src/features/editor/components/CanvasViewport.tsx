@@ -67,6 +67,11 @@ type LayerCanvasObject = {
 };
 
 type CropHandle = "move" | "n" | "e" | "s" | "w" | "nw" | "ne" | "sw" | "se" | null;
+type DocumentRect = { x: number; y: number; width: number; height: number };
+type SafeAreaHintLayout = {
+  cardRect: DocumentRect;
+  closeButtonRect: DocumentRect;
+};
 
 function getLayerId(target: unknown) {
   return (target as LayerCanvasObject | undefined)?.data?.layerId ?? null;
@@ -200,6 +205,19 @@ function mapClientPointToDocument(
     x: (clientX - rect.left - viewport.panX) / viewport.zoom,
     y: (clientY - rect.top - viewport.panY) / viewport.zoom
   };
+}
+
+function isPointInDocumentRect(point: DoodlePoint, rect: DocumentRect | null) {
+  if (!rect) {
+    return false;
+  }
+
+  return (
+    point.x >= rect.x &&
+    point.x <= rect.x + rect.width &&
+    point.y >= rect.y &&
+    point.y <= rect.y + rect.height
+  );
 }
 
 function getCropPreviewBounds(layer: ImageLayer, crop: ImageCrop) {
@@ -339,8 +357,9 @@ function drawRepairOverlay(
 function drawSafeAreaOverlay(
   context: CanvasRenderingContext2D,
   document: EditorDocument,
-  viewport: EditorDocument["canvas"]["viewport"]
-) {
+  viewport: EditorDocument["canvas"]["viewport"],
+  options?: { hideHint?: boolean }
+): SafeAreaHintLayout | null {
   const inset =
     document.canvas.safeAreaInset > 0
       ? document.canvas.safeAreaInset
@@ -351,7 +370,7 @@ function drawSafeAreaOverlay(
   const safeHeight = Math.max(0, document.canvas.height - inset * 2);
 
   if (safeWidth <= 0 || safeHeight <= 0) {
-    return;
+    return null;
   }
 
   context.save();
@@ -372,10 +391,17 @@ function drawSafeAreaOverlay(
   context.setLineDash([18, 10]);
   context.strokeRect(safeX, safeY, safeWidth, safeHeight);
 
+  if (options?.hideHint) {
+    context.restore();
+    return null;
+  }
+
   const safeAreaHint = "重要内容请勿超出安全区，以免在不同投放尺寸或平台裁切时被遮挡或截断。";
   const hintPaddingX = 14;
   const hintPaddingY = 10;
   const hintOffset = 12;
+  const closeButtonSize = 22;
+  const closeButtonGap = 8;
   const maxHintWidth = Math.min(360, Math.max(180, safeWidth - hintOffset * 2 - hintPaddingX * 2));
   const hintLines: string[] = [];
 
@@ -398,22 +424,46 @@ function drawSafeAreaOverlay(
 
   const visibleLines = hintLines.slice(0, 2);
   const lineHeight = 22;
+  const textWidth = Math.max(...visibleLines.map((line) => context.measureText(line).width), 0);
   const hintBoxWidth = Math.min(
     safeWidth - hintOffset * 2,
-    Math.max(...visibleLines.map((line) => context.measureText(line).width), 0) + hintPaddingX * 2
+    textWidth + hintPaddingX * 2 + closeButtonSize + closeButtonGap
   );
   const hintBoxHeight = visibleLines.length * lineHeight + hintPaddingY * 2;
   const hintX = safeX + hintOffset;
   const hintY = safeY + hintOffset;
+  const closeButtonX = hintX + hintBoxWidth - hintPaddingX - closeButtonSize;
+  const closeButtonY = hintY + hintPaddingY - 1;
 
   context.fillStyle = "rgba(255, 248, 238, 0.94)";
   context.fillRect(hintX, hintY, hintBoxWidth, hintBoxHeight);
+
+  context.strokeStyle = "rgba(195, 111, 73, 0.28)";
+  context.lineWidth = 1;
+  context.setLineDash([]);
+  context.strokeRect(hintX, hintY, hintBoxWidth, hintBoxHeight);
+
+  context.fillStyle = "rgba(255, 248, 238, 0.98)";
+  context.fillRect(closeButtonX, closeButtonY, closeButtonSize, closeButtonSize);
+
+  context.strokeStyle = "rgba(195, 111, 73, 0.36)";
+  context.strokeRect(closeButtonX, closeButtonY, closeButtonSize, closeButtonSize);
 
   context.fillStyle = "rgba(195, 111, 73, 0.94)";
   visibleLines.forEach((line, index) => {
     context.fillText(line, hintX + hintPaddingX, hintY + hintPaddingY + index * lineHeight);
   });
+
+  context.font = '700 15px "Segoe UI"';
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText("×", closeButtonX + closeButtonSize / 2, closeButtonY + closeButtonSize / 2 + 0.5);
   context.restore();
+
+  return {
+    cardRect: { x: hintX, y: hintY, width: hintBoxWidth, height: hintBoxHeight },
+    closeButtonRect: { x: closeButtonX, y: closeButtonY, width: closeButtonSize, height: closeButtonSize }
+  };
 }
 
 export function CanvasViewport({
@@ -436,6 +486,7 @@ export function CanvasViewport({
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const runtimeRef = useRef<Canvas | null>(null);
   const suppressSyncRef = useRef(false);
+  const safeAreaHintLayoutRef = useRef<SafeAreaHintLayout | null>(null);
   const activeToolRef = useRef(activeTool);
   const documentRef = useRef(document);
   const selectedImageLayerRef = useRef(selectedImageLayer);
@@ -456,6 +507,7 @@ export function CanvasViewport({
     startPoint: { x: 0, y: 0 },
     startCrop: null
   });
+  const [isSafeAreaHintDismissed, setIsSafeAreaHintDismissed] = useState(false);
   const canvasSurfaceStyle: CSSProperties = {
     width: document.canvas.width,
     height: document.canvas.height,
@@ -478,7 +530,9 @@ export function CanvasViewport({
     const effectiveViewport = viewport ?? documentRef.current.canvas.viewport;
 
     context.clearRect(0, 0, overlay.width, overlay.height);
-    drawSafeAreaOverlay(context, documentRef.current, effectiveViewport);
+    safeAreaHintLayoutRef.current = drawSafeAreaOverlay(context, documentRef.current, effectiveViewport, {
+      hideHint: isSafeAreaHintDismissed
+    });
 
     if (activeToolRef.current === "doodle") {
       drawDoodlePreview(context, doodlePointsRef.current, effectiveViewport, doodleStyle);
@@ -610,6 +664,13 @@ export function CanvasViewport({
         return;
       }
 
+      const docPoint = mapClientPointToDocument(pointer.x, pointer.y, rect, currentDocument.canvas.viewport);
+
+      if (isPointInDocumentRect(docPoint, safeAreaHintLayoutRef.current?.closeButtonRect ?? null)) {
+        setIsSafeAreaHintDismissed(true);
+        return;
+      }
+
       if (currentTool === "select" && !targetLayerId) {
         panSessionRef.current = { isPanning: true, lastX: pointer.x, lastY: pointer.y };
         syncCanvasInteractionMode(runtime, currentDocument, currentTool, true);
@@ -617,8 +678,6 @@ export function CanvasViewport({
         runtime.requestRenderAll();
         return;
       }
-
-      const docPoint = mapClientPointToDocument(pointer.x, pointer.y, rect, currentDocument.canvas.viewport);
 
       if (currentTool === "doodle") {
         drawSessionRef.current.mode = "doodle";
@@ -855,6 +914,10 @@ export function CanvasViewport({
       suppressSyncRef.current = false;
     };
   }, [cropSession, document, doodleStyle, repairSession, selectedLayerIds]);
+
+  useEffect(() => {
+    renderOverlay();
+  }, [isSafeAreaHintDismissed]);
 
   return (
     <div className="workspace__viewport-shell">

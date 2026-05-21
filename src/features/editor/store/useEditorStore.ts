@@ -1511,7 +1511,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     if (layer.transform.rotation !== 0 || layer.transform.flipX || layer.transform.flipY) {
       return {
         success: false,
-        errorMessage: "局部调整当前仅支持未旋转、未翻转的图片图层。"
+        errorMessage: "局部重绘当前仅支持未旋转、未翻转的图片图层。"
       };
     }
 
@@ -1595,7 +1595,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
           )
         }));
 
-        return { success: false, errorMessage: result.errorMessage ?? "局部调整失败。" };
+        return { success: false, errorMessage: result.errorMessage ?? "局部重绘失败。" };
       }
 
       const size = await getImageSizeFromSource(result.resultUrl);
@@ -1640,7 +1640,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
       return { success: true, errorMessage: null };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "局部调整失败。";
+      const errorMessage = error instanceof Error ? error.message : "局部重绘失败。";
 
       set((current) => ({
         repairSession:
@@ -1742,7 +1742,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
                       fileName: result.fileName,
                       providerModel: result.providerModel
                     },
-                    lastAiError: result.errorMessage,
+                    lastAiError: result.status === "succeeded" ? null : result.errorMessage,
                     lastAiSucceededAt: result.status === "succeeded" ? new Date().toISOString() : entry.aiMeta.lastAiSucceededAt
                   }
                 }
@@ -1755,9 +1755,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         return { success: true, errorMessage: null };
       }
 
-      return { success: false, errorMessage: result.errorMessage ?? "AI3D 生成失败。" };
+      return { success: false, errorMessage: result.errorMessage ?? "立体创作失败。" };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "AI3D 生成失败。";
+      const message = error instanceof Error ? error.message : "立体创作失败。";
 
       set((current) => ({
         document: updateLayers(current.document, (layers) =>

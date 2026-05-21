@@ -1,5 +1,5 @@
 .workspace__tool-button--compact[aria-label="擦除圈选"],
-.workspace__tool-button--compact[aria-label="执行调整"] {
+.workspace__tool-button--compact[aria-label="执行重绘"] {
   display: none;
 }
 

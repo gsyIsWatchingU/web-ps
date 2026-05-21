@@ -50,7 +50,7 @@ const toolItemsV2 = [
   { id: "doodle", label: "涂鸦", hint: "手绘标记内容，生成可编辑涂鸦图层", icon: "✎" },
   { id: "brush", label: "圈选调整", hint: "圈出需要 AI 调整的局部区域", icon: "◌" },
   { id: "eraser", label: "擦除圈选", hint: "擦掉多选或误选的调整区域", icon: "⌫" },
-  { id: "repair", label: "执行调整", hint: "对当前圈选区域执行 AI 局部调整", icon: "✦" },
+  { id: "repair", label: "执行重绘", hint: "对当前圈选区域执行 AI 局部重绘", icon: "✦" },
   { id: "filter", label: "滤镜", hint: "套用预设滤镜并微调画面质感", icon: "◐" },
   { id: "shape", label: "装饰", hint: "添加徽章、贴片和强调色块", icon: "◆" }
 ] as const;
@@ -300,8 +300,8 @@ const toolItemsAntd = [
   },
   {
     id: "repair",
-    label: "局部调整",
-    hint: "框选需要AI调整的局部区域",
+    label: "局部重绘",
+    hint: "框选需要AI重绘的局部区域",
     icon: (
       <IconBase>
         <path d="M6 17 17 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
@@ -334,7 +334,7 @@ const toolItemsAntd = [
   },
   {
     id: "ai3d",
-    label: "AI3D",
+    label: "立体创作",
     hint: "基于图片生成3D模型，仅支持URL图片",
     icon: (
       <IconBase>
@@ -678,19 +678,17 @@ export function EditorWorkspace() {
       return;
     }
 
-    setAiBusy("ai3d");
     setFeedbackMessage(null);
 
     try {
       const result = await applyAi3d(imageLayer.id, targetUrl);
       const task = imageLayer.aiMeta.model3dTask;
       if (result.success && task.status === "succeeded" && task.downloadUrl) {
-        setFeedbackMessage(`AI3D 生成成功！文件已准备就绪，可下载 ${task.fileName}。`);
+        setFeedbackMessage(`立体创作成功！文件已准备就绪，可下载 ${task.fileName}。`);
       } else {
-        setFeedbackMessage(result.errorMessage ?? "AI3D 生成失败。");
+        setFeedbackMessage(result.errorMessage ?? "立体创作失败。");
       }
     } finally {
-      setAiBusy(null);
     }
   };
 
@@ -712,11 +710,11 @@ export function EditorWorkspace() {
       const result = await applyAiRepair(imageLayer.id);
 
       if (result.success) {
-        setFeedbackMessage("局部调整完成，已替换选中的图片。");
+        setFeedbackMessage("局部重绘完成，已替换选中的图片。");
         return;
       }
 
-      setFeedbackMessage(result.errorMessage ?? "局部调整失败。");
+      setFeedbackMessage(result.errorMessage ?? "局部重绘失败。");
     } finally {
       setAiBusy(null);
     }
@@ -874,7 +872,7 @@ export function EditorWorkspace() {
           <div className="workspace__property workspace__property--highlight">
             <div className="workspace__property-label">请先选择图片图层</div>
             <p className="workspace__footer-note">
-              裁剪、滤镜和 AI3D 都需要先选中一个图片图层，右侧才能继续编辑。
+              裁剪、滤镜和立体创作都需要先选中一个图片图层，右侧才能继续编辑。
             </p>
             <div className="workspace__inline-actions">
               <button
@@ -1036,7 +1034,7 @@ export function EditorWorkspace() {
                 onClick={() => void handleAiRepair()}
                 type="button"
               >
-                {aiBusy === "repair" || activeRepairSession?.isSubmitting ? "调整中..." : "执行调整"}
+                {aiBusy === "repair" || activeRepairSession?.isSubmitting ? "重绘中..." : "执行重绘"}
               </button>
             </div>
             <p className="workspace__footer-note">
@@ -1044,7 +1042,7 @@ export function EditorWorkspace() {
             </p>
             {repairTask.status !== "idle" ? (
               <p className="workspace__footer-note">
-                调整状态: {repairTask.status}
+                重绘状态: {repairTask.status}
                 {repairTask.taskId ? ` (${repairTask.taskId})` : ""}
               </p>
             ) : null}
@@ -1161,7 +1159,7 @@ export function EditorWorkspace() {
         return (
           <div className="workspace__property-list">
             <div className="workspace__property">
-              <div className="workspace__property-label">AI3D 模型生成</div>
+              <div className="workspace__property-label">立体创作</div>
               <p className="workspace__footer-note">
                 基于图片生成 3D 模型，支持本地上传图片和网络图片 URL。
               </p>
@@ -1183,14 +1181,14 @@ export function EditorWorkspace() {
               <div className="workspace__inline-actions">
                 <button
                   className="workspace__action-button"
-                  disabled={aiBusy !== null || !aiConfigured || !canGenerate}
+                  disabled={(task.status === "pending" || task.status === "running") || !aiConfigured || !canGenerate}
                   onClick={() => void handleAi3d()}
                   type="button"
                 >
-                  {aiBusy === "ai3d" ? "生成中..." : "生成 3D 模型"}
+                  {(task.status === "pending" || task.status === "running") ? "创作中..." : "开始立体创作"}
                 </button>
               </div>
-              {task.status === "pending" && aiBusy === "ai3d" ? (
+              {task.status === "pending" ? (
                 <p className="workspace__footer-note">正在创建任务...</p>
               ) : task.status === "running" ? (
                 <p className="workspace__footer-note">任务处理中，请稍候...</p>
@@ -1202,8 +1200,9 @@ export function EditorWorkspace() {
                     href={task.downloadUrl}
                     target="_blank"
                     rel="noopener noreferrer"
+                    style={{ textDecoration: "none" }}
                   >
-                    下载模型 ({task.fileName})
+                    下载模型
                   </a>
                   <button
                     className="workspace__action-button"
@@ -2094,7 +2093,7 @@ export function EditorWorkspace() {
                 添加装饰
               </button>
               <button className="workspace__tool-button" onClick={() => setIsGlbPreviewOpen(true)} type="button">
-                预览
+                预览文件
               </button>
             </div>
           </div>

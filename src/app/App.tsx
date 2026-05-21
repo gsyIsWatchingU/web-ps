@@ -35,7 +35,7 @@ export function App() {
           <div>
             <h1 className="eyebrow">Pic Boost</h1>
             <p className="workspace__meta">
-              面向正式业务场景的素材编辑界面，支持裁剪、文字、滤镜、局部调整和成品导出。
+              面向正式业务场景的素材编辑界面，支持裁剪、文字、滤镜、局部重绘和成品导出。
             </p>
           </div>
           <div className="app-shell__header-actions">
