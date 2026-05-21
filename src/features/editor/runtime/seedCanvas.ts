@@ -36,10 +36,8 @@ type LayerObject = FabricObject & {
   };
 };
 
-function applyCommonProps(object: FabricObject, layer: EditorLayer, isSelected: boolean) {
-  object.set({
-    left: layer.transform.x,
-    top: layer.transform.y,
+function applyCommonProps(object: FabricObject, layer: EditorLayer, isSelected: boolean, preservePosition = false) {
+  const props: Record<string, unknown> = {
     scaleX: layer.transform.scaleX,
     scaleY: layer.transform.scaleY,
     angle: layer.transform.rotation,
@@ -50,7 +48,14 @@ function applyCommonProps(object: FabricObject, layer: EditorLayer, isSelected: 
     evented: !layer.locked,
     hasControls: !layer.locked,
     hasBorders: !layer.locked
-  });
+  };
+
+  if (!preservePosition) {
+    props.left = layer.transform.x;
+    props.top = layer.transform.y;
+  }
+
+  object.set(props);
 
   (object as LayerObject).data = {
     ...(object as LayerObject).data,
@@ -132,7 +137,9 @@ async function createImageObject(
       cropX: 0,
       cropY: 0,
       width: layer.originalWidth,
-      height: layer.originalHeight
+      height: layer.originalHeight,
+      left: layer.transform.x - layer.crop.x * layer.transform.scaleX,
+      top: layer.transform.y - layer.crop.y * layer.transform.scaleY
     });
   } else {
     image.set({
@@ -262,6 +269,7 @@ export async function seedCanvas(
     }
 
     let object: FabricObject;
+    const isCropPreviewImage = layer.type === "image" && !!cropPreview && cropPreview.layerId === layer.id;
 
     if (layer.type === "image") {
       object = await createImageObject(layer, cropPreview);
@@ -273,7 +281,7 @@ export async function seedCanvas(
       object = createDecorationObject(layer);
     }
 
-    applyCommonProps(object, layer, selectedLayerIds.includes(layer.id));
+    applyCommonProps(object, layer, selectedLayerIds.includes(layer.id), isCropPreviewImage);
     canvas.add(object);
   }
 

@@ -593,6 +593,163 @@ export function CanvasViewport({
     }
   }, []);
 
+  const handleOverlayMouseDown = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
+    const pointer = getPointerClientPosition(event.nativeEvent);
+    const currentDocument = documentRef.current;
+    const rect = overlayRef.current?.getBoundingClientRect();
+
+    if (!rect) {
+      return;
+    }
+
+    const docPoint = mapClientPointToDocument(pointer.x, pointer.y, rect, currentDocument.canvas.viewport);
+
+    if (isPointInDocumentRect(docPoint, safeAreaHintLayoutRef.current?.closeButtonRect ?? null)) {
+      setIsSafeAreaHintDismissed(true);
+      event.stopPropagation();
+      return;
+    }
+
+    const runtime = runtimeRef.current;
+    if (!runtime) {
+      return;
+    }
+
+    const currentTool = activeToolRef.current;
+    const currentSelectedImageLayer = selectedImageLayerRef.current;
+
+    if (currentTool === "doodle") {
+      drawSessionRef.current.mode = "doodle";
+      doodlePointsRef.current = [docPoint];
+      renderOverlay();
+      return;
+    }
+
+    if (
+      currentTool === "repair" &&
+      currentSelectedImageLayer &&
+      repairSessionRef.current &&
+      repairSessionRef.current.layerId === currentSelectedImageLayer.id &&
+      !repairSessionRef.current.isSubmitting
+    ) {
+      drawSessionRef.current.mode = "repair";
+      doodlePointsRef.current = [docPoint];
+      renderOverlay();
+      return;
+    }
+
+    if (
+      currentTool === "crop" &&
+      currentSelectedImageLayer &&
+      cropSessionRef.current &&
+      cropSessionRef.current.layerId === currentSelectedImageLayer.id
+    ) {
+      const handle = resolveCropHandle(docPoint, getCropPreviewBounds(currentSelectedImageLayer, cropSessionRef.current.draft));
+      if (handle) {
+        drawSessionRef.current.mode = "crop";
+        cropDragRef.current = { handle, startPoint: docPoint, startCrop: cropSessionRef.current.draft };
+      }
+    }
+  }, []);
+
+  const handleOverlayMouseMove = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
+    const pointer = getPointerClientPosition(event.nativeEvent);
+    const currentDocument = documentRef.current;
+    const rect = overlayRef.current?.getBoundingClientRect();
+
+    if (!rect) {
+      return;
+    }
+
+    const docPoint = mapClientPointToDocument(pointer.x, pointer.y, rect, currentDocument.canvas.viewport);
+
+    if (drawSessionRef.current.mode === "doodle" && activeToolRef.current === "doodle") {
+      doodlePointsRef.current = [...doodlePointsRef.current, docPoint];
+      renderOverlay();
+      return;
+    }
+
+    if (drawSessionRef.current.mode === "repair" && activeToolRef.current === "repair") {
+      doodlePointsRef.current = [...doodlePointsRef.current, docPoint];
+      renderOverlay();
+      return;
+    }
+
+    if (
+      drawSessionRef.current.mode === "crop" &&
+      activeToolRef.current === "crop" &&
+      selectedImageLayerRef.current &&
+      cropDragRef.current.handle &&
+      cropDragRef.current.startCrop
+    ) {
+      const deltaX = (docPoint.x - cropDragRef.current.startPoint.x) / selectedImageLayerRef.current.transform.scaleX;
+      const deltaY = (docPoint.y - cropDragRef.current.startPoint.y) / selectedImageLayerRef.current.transform.scaleY;
+      const startCrop = cropDragRef.current.startCrop;
+      const right = startCrop.x + startCrop.width;
+      const bottom = startCrop.y + startCrop.height;
+
+      if (cropDragRef.current.handle === "move") {
+        onCropSessionChangeRef.current({ x: Math.round(startCrop.x + deltaX), y: Math.round(startCrop.y + deltaY) });
+        return;
+      }
+
+      const nextLeft = ["w", "nw", "sw"].includes(cropDragRef.current.handle) ? Math.round(startCrop.x + deltaX) : startCrop.x;
+      const nextTop = ["n", "nw", "ne"].includes(cropDragRef.current.handle) ? Math.round(startCrop.y + deltaY) : startCrop.y;
+      const nextRight = ["e", "ne", "se"].includes(cropDragRef.current.handle) ? Math.round(right + deltaX) : right;
+      const nextBottom = ["s", "sw", "se"].includes(cropDragRef.current.handle) ? Math.round(bottom + deltaY) : bottom;
+
+      onCropSessionChangeRef.current({ x: nextLeft, y: nextTop, width: nextRight - nextLeft, height: nextBottom - nextTop });
+    }
+  }, []);
+
+  const handleOverlayMouseUp = useCallback(() => {
+    if (panSessionRef.current.isPanning) {
+      panSessionRef.current.isPanning = false;
+      const runtime = runtimeRef.current;
+      if (runtime) {
+        const viewportTransform = runtime.viewportTransform ?? [1, 0, 0, 1, 0, 0];
+        onViewportChangeRef.current({ zoom: viewportTransform[0] ?? 1, panX: viewportTransform[4] ?? 0, panY: viewportTransform[5] ?? 0 });
+      }
+    }
+
+    if (drawSessionRef.current.mode === "doodle" && doodlePointsRef.current.length > 1) {
+      onDoodleCommitRef.current(doodlePointsRef.current);
+    }
+
+    if (drawSessionRef.current.mode === "repair" && doodlePointsRef.current.length > 0) {
+      onRepairStrokeCommitRef.current(doodlePointsRef.current);
+    }
+
+    drawSessionRef.current.mode = null;
+    doodlePointsRef.current = [];
+    cropDragRef.current = { handle: null, startPoint: { x: 0, y: 0 }, startCrop: null };
+    renderOverlay();
+  }, []);
+
+  const handleOverlayTouchStart = useCallback((event: React.TouchEvent<HTMLCanvasElement>) => {
+    if (event.touches.length > 0) {
+      const mouseEvent = new MouseEvent("mousedown", {
+        clientX: event.touches[0].clientX,
+        clientY: event.touches[0].clientY
+      });
+      handleOverlayMouseDown(mouseEvent as any);
+    }
+  }, []);
+
+  const handleOverlayTouchMove = useCallback((event: React.TouchEvent<HTMLCanvasElement>) => {
+    if (event.touches.length > 0) {
+      const mouseEvent = new MouseEvent("mousemove", {
+        clientX: event.touches[0].clientX,
+        clientY: event.touches[0].clientY
+      });
+      handleOverlayMouseMove(mouseEvent as any);
+    }
+  }, []);
+
+  const handleOverlayTouchEnd = useCallback(() => {
+    handleOverlayMouseUp();
+  }, []);
+
   const renderOverlay = (viewport?: EditorDocument["canvas"]["viewport"]) => {
     const overlay = overlayRef.current;
 
@@ -954,6 +1111,9 @@ export function CanvasViewport({
       return;
     }
 
+    drawSessionRef.current.mode = null;
+    doodlePointsRef.current = [];
+
     const directManipulation = isDirectManipulationTool(activeTool);
     syncCanvasInteractionMode(runtime, documentRef.current, activeTool);
 
@@ -1024,6 +1184,12 @@ export function CanvasViewport({
               className={`workspace__mask-overlay ${["doodle", "crop", "repair"].includes(activeTool) ? "workspace__mask-overlay--interactive" : ""}`}
               height={document.canvas.height}
               onClick={handleOverlayClick}
+              onMouseDown={handleOverlayMouseDown}
+              onMouseMove={handleOverlayMouseMove}
+              onMouseUp={handleOverlayMouseUp}
+              onTouchStart={handleOverlayTouchStart}
+              onTouchMove={handleOverlayTouchMove}
+              onTouchEnd={handleOverlayTouchEnd}
               width={document.canvas.width}
             />
           </div>

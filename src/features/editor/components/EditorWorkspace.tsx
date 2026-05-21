@@ -772,6 +772,10 @@ export function EditorWorkspace() {
 
     setFeedbackMessage(null);
     setActiveTool(toolId);
+
+    if (toolId === "repair" && selectedImageLayer) {
+      startRepairSession(selectedImageLayer.id);
+    }
   };
 
   const handleDoodleCommit = (points: Parameters<typeof addDoodleLayer>[0]) => {
@@ -1011,24 +1015,37 @@ export function EditorWorkspace() {
               <div className="workspace__property-label">选择模式</div>
               <div className="workspace__inline-actions">
                 <button
-                  className={`workspace__action-button ${activeRepairSession?.toolMode !== "eraser" ? "is-active" : ""}`}
-                  onClick={() => setRepairToolMode("brush")}
+                  className={`workspace__action-button ${activeRepairSession === null || activeRepairSession.toolMode !== "eraser" ? "is-active" : ""}`}
+                  onClick={() => {
+                    if (!activeRepairSession && selectedImageLayer) {
+                      startRepairSession(selectedImageLayer.id);
+                    }
+                    setRepairToolMode("brush");
+                  }}
                   type="button"
                 >
                   画笔
                 </button>
                 <button
                   className={`workspace__action-button ${activeRepairSession?.toolMode === "eraser" ? "is-active" : ""}`}
-                  onClick={() => setRepairToolMode("eraser")}
+                  onClick={() => {
+                    if (!activeRepairSession && selectedImageLayer) {
+                      startRepairSession(selectedImageLayer.id);
+                    }
+                    setRepairToolMode("eraser");
+                  }}
                   type="button"
                 >
                   橡皮擦
                 </button>
                 <button
-                  className={`workspace__action-button ${activeRepairSession?.guidePreviewEnabled !== false ? "is-active" : ""}`}
-                  onClick={() =>
-                    setRepairGuidePreviewEnabled(!(activeRepairSession?.guidePreviewEnabled !== false))
-                  }
+                  className={`workspace__action-button ${activeRepairSession === null || activeRepairSession.guidePreviewEnabled !== false ? "is-active" : ""}`}
+                  onClick={() => {
+                    if (!activeRepairSession && selectedImageLayer) {
+                      startRepairSession(selectedImageLayer.id);
+                    }
+                    setRepairGuidePreviewEnabled(!(activeRepairSession?.guidePreviewEnabled !== false));
+                  }}
                   type="button"
                 >
                   预览引导
