@@ -715,7 +715,7 @@ export function EditorWorkspace() {
       const result = await applyAiRepair(imageLayer.id);
 
       if (result.success) {
-        setFeedbackMessage("局部重绘完成，已替换选中的图片。");
+        setFeedbackMessage("局部重绘完成，已使用新图替换当前图片，位置和大小保持不变。");
         return;
       }
 
@@ -1121,12 +1121,12 @@ export function EditorWorkspace() {
                   style={{ textDecoration: "none" }}
                   target="_blank"
                 >
-                  下载原图
+                  下载重绘原图
                 </a>
               </div>
             ) : null}
             {repairTask.status === "succeeded" && repairTask.resultUrl ? (
-              <p className="workspace__footer-note">已回填到工作台，可下载原图。</p>
+              <p className="workspace__footer-note">新图已原位替换当前图层，可继续调整、裁剪或导出。</p>
             ) : null}
             {repairTask.errorMessage ? <p className="workspace__warning">{repairTask.errorMessage}</p> : null}
             {lastAiError && !repairTask.errorMessage ? <p className="workspace__warning">{lastAiError}</p> : null}

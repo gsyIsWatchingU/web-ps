@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ant-design/icons": "^6.2.3",
     "@types/three": "^0.184.1",
+    "antd": "^6.4.3",
     "fabric": "^6.0.0",
     "jszip": "^3.10.1",
     "react": "^19.0.0",

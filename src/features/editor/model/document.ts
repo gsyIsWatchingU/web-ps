@@ -212,6 +212,24 @@ export type CanvasViewport = {
   panY: number;
 };
 
+export const LEGACY_DEFAULT_CANVAS_VIEWPORT: CanvasViewport = {
+  zoom: 0.5,
+  panX: 0,
+  panY: 0
+};
+
+export function createDefaultCanvasViewport(): CanvasViewport {
+  return { ...LEGACY_DEFAULT_CANVAS_VIEWPORT };
+}
+
+export function isDefaultCanvasViewport(viewport: Partial<CanvasViewport> | null | undefined) {
+  return (
+    viewport?.zoom === LEGACY_DEFAULT_CANVAS_VIEWPORT.zoom &&
+    viewport?.panX === LEGACY_DEFAULT_CANVAS_VIEWPORT.panX &&
+    viewport?.panY === LEGACY_DEFAULT_CANVAS_VIEWPORT.panY
+  );
+}
+
 export type CanvasModel = {
   presetId: CanvasPresetId;
   width: number;
@@ -823,11 +841,7 @@ export function createInitialDocument(): EditorDocument {
         color: "#fbf6ef"
       },
       safeAreaInset: getDefaultSafeAreaInset(preset.width, preset.height),
-      viewport: {
-        zoom: 0.5,
-        panX: 0,
-        panY: 0
-      }
+      viewport: createDefaultCanvasViewport()
     },
     layers: [
       {

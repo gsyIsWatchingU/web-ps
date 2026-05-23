@@ -2,6 +2,7 @@ import { Canvas } from "fabric";
 import { useEffect, useRef, useState, useCallback, type CSSProperties } from "react";
 import type {
   CanvasBackgroundMode,
+  CanvasViewport as DocumentCanvasViewport,
   DoodlePoint,
   DoodleLayer,
   EditorDocument,
@@ -10,7 +11,7 @@ import type {
   ImageLayer,
   RepairStroke
 } from "../model/document";
-import { getDefaultSafeAreaInset } from "../model/document";
+import { getDefaultSafeAreaInset, isDefaultCanvasViewport } from "../model/document";
 import { seedCanvas } from "../runtime/seedCanvas";
 
 type CropSession = {
@@ -79,6 +80,11 @@ type SafeAreaHintLayout = {
   closeButtonRect: DocumentRect;
 };
 
+type ViewportBounds = {
+  width: number;
+  height: number;
+};
+
 function getLayerId(target: unknown) {
   return (target as LayerCanvasObject | undefined)?.data?.layerId ?? null;
 }
@@ -94,6 +100,64 @@ function clamp(value: number, min = 0, max = 1) {
 
 function clampZoom(zoom: number) {
   return Math.min(3, Math.max(0.2, zoom));
+}
+
+function clampFitZoom(zoom: number) {
+  return Math.min(1, Math.max(0.2, zoom));
+}
+
+function clampPan(
+  panX: number,
+  panY: number,
+  zoom: number,
+  canvasWidth: number,
+  canvasHeight: number,
+  viewportWidth: number,
+  viewportHeight: number
+): { panX: number; panY: number } {
+  const scaledCanvasWidth = canvasWidth * zoom;
+  const scaledCanvasHeight = canvasHeight * zoom;
+  const maxPanX = Math.max(0, viewportWidth - scaledCanvasWidth);
+  const maxPanY = Math.max(0, viewportHeight - scaledCanvasHeight);
+  return {
+    panX: Math.max(0, Math.min(maxPanX, panX)),
+    panY: Math.max(0, Math.min(maxPanY, panY))
+  };
+}
+
+function roundViewport(viewport: DocumentCanvasViewport): DocumentCanvasViewport {
+  return {
+    zoom: Number(viewport.zoom.toFixed(3)),
+    panX: Math.round(viewport.panX),
+    panY: Math.round(viewport.panY)
+  };
+}
+
+function isSameViewport(left: Partial<DocumentCanvasViewport> | null | undefined, right: DocumentCanvasViewport) {
+  return left?.zoom === right.zoom && left?.panX === right.panX && left?.panY === right.panY;
+}
+
+function calculateCenteredViewport(
+  document: EditorDocument,
+  bounds: ViewportBounds
+): DocumentCanvasViewport {
+  const zoom = clampFitZoom(Math.min(bounds.width / document.canvas.width, bounds.height / document.canvas.height));
+  const defaultPanY = 70;
+  const centeredPanX = (bounds.width - document.canvas.width * zoom) / 2;
+  const clamped = clampPan(
+    centeredPanX,
+    defaultPanY,
+    zoom,
+    document.canvas.width,
+    document.canvas.height,
+    bounds.width,
+    bounds.height
+  );
+  return roundViewport({
+    zoom,
+    panX: clamped.panX,
+    panY: clamped.panY
+  });
 }
 
 function isDirectManipulationTool(activeTool: EditorTool) {
@@ -642,9 +706,12 @@ export function CanvasViewport({
 }: CanvasViewportProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
+  const viewportShellRef = useRef<HTMLDivElement | null>(null);
+  const canvasSurfaceRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<Canvas | null>(null);
   const suppressSyncRef = useRef(false);
   const safeAreaHintLayoutRef = useRef<SafeAreaHintLayout | null>(null);
+  const pendingAutoViewportRef = useRef<DocumentCanvasViewport | null>(null);
   const activeToolRef = useRef(activeTool);
   const documentRef = useRef(document);
   const selectedImageLayerRef = useRef(selectedImageLayer);
@@ -667,6 +734,7 @@ export function CanvasViewport({
     startCrop: null
   });
   const [isSafeAreaHintDismissed, setIsSafeAreaHintDismissed] = useState(false);
+  const [viewportBounds, setViewportBounds] = useState<ViewportBounds | null>(null);
   const canvasSurfaceStyle: CSSProperties = {
     width: document.canvas.width,
     height: document.canvas.height,
@@ -994,6 +1062,85 @@ export function CanvasViewport({
   ]);
 
   useEffect(() => {
+    const shell = viewportShellRef.current;
+    const surface = canvasSurfaceRef.current;
+
+    if (!shell) {
+      return;
+    }
+
+    const updateBounds = () => {
+      const shellStyle = window.getComputedStyle(shell);
+      const shellPaddingX = Number.parseFloat(shellStyle.paddingLeft) + Number.parseFloat(shellStyle.paddingRight);
+      const shellPaddingY = Number.parseFloat(shellStyle.paddingTop) + Number.parseFloat(shellStyle.paddingBottom);
+      const surfaceStyle = surface ? window.getComputedStyle(surface) : null;
+      const surfacePaddingX = surfaceStyle
+        ? Number.parseFloat(surfaceStyle.paddingLeft) + Number.parseFloat(surfaceStyle.paddingRight)
+        : 0;
+      const surfacePaddingY = surfaceStyle
+        ? Number.parseFloat(surfaceStyle.paddingTop) + Number.parseFloat(surfaceStyle.paddingBottom)
+        : 0;
+      const nextWidth = Math.max(1, shell.clientWidth - shellPaddingX - surfacePaddingX);
+      const nextHeight = Math.max(1, shell.clientHeight - shellPaddingY - surfacePaddingY);
+
+      setViewportBounds((current) => {
+        if (current && current.width === nextWidth && current.height === nextHeight) {
+          return current;
+        }
+
+        return { width: nextWidth, height: nextHeight };
+      });
+    };
+
+    updateBounds();
+
+    const observer = new ResizeObserver(() => {
+      updateBounds();
+    });
+
+    observer.observe(shell);
+    if (surface) {
+      observer.observe(surface);
+    }
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [document.canvas.height, document.canvas.width]);
+
+  useEffect(() => {
+    if (!viewportBounds || !isDefaultCanvasViewport(document.canvas.viewport)) {
+      return;
+    }
+
+    const nextViewport = calculateCenteredViewport(document, viewportBounds);
+
+    if (isSameViewport(document.canvas.viewport, nextViewport) || isSameViewport(pendingAutoViewportRef.current, nextViewport)) {
+      return;
+    }
+
+    pendingAutoViewportRef.current = nextViewport;
+    onViewportChangeRef.current(nextViewport);
+  }, [
+    document,
+    document.canvas.height,
+    document.canvas.viewport,
+    document.canvas.width,
+    viewportBounds
+  ]);
+
+  useEffect(() => {
+    if (pendingAutoViewportRef.current && isSameViewport(document.canvas.viewport, pendingAutoViewportRef.current)) {
+      pendingAutoViewportRef.current = null;
+      return;
+    }
+
+    if (!isDefaultCanvasViewport(document.canvas.viewport)) {
+      pendingAutoViewportRef.current = null;
+    }
+  }, [document.canvas.viewport]);
+
+  useEffect(() => {
     if (!canvasRef.current) {
       return;
     }
@@ -1128,14 +1275,27 @@ export function CanvasViewport({
         const deltaX = pointer.x - panSessionRef.current.lastX;
         const deltaY = pointer.y - panSessionRef.current.lastY;
         const viewportTransform = runtime.viewportTransform ?? [1, 0, 0, 1, 0, 0];
+        const nextZoom = viewportTransform[0] ?? 1;
         const nextPanX = (viewportTransform[4] ?? 0) + deltaX;
         const nextPanY = (viewportTransform[5] ?? 0) + deltaY;
-        const nextZoom = viewportTransform[0] ?? 1;
+
+        const shell = viewportShellRef.current;
+        const clampedPan = shell
+          ? clampPan(
+              nextPanX,
+              nextPanY,
+              nextZoom,
+              documentRef.current.canvas.width,
+              documentRef.current.canvas.height,
+              shell.clientWidth,
+              shell.clientHeight
+            )
+          : { panX: nextPanX, panY: nextPanY };
 
         panSessionRef.current.lastX = pointer.x;
         panSessionRef.current.lastY = pointer.y;
-        applyViewport(runtime, nextZoom, nextPanX, nextPanY);
-        renderOverlay({ zoom: nextZoom, panX: nextPanX, panY: nextPanY });
+        applyViewport(runtime, nextZoom, clampedPan.panX, clampedPan.panY);
+        renderOverlay({ zoom: nextZoom, panX: clampedPan.panX, panY: clampedPan.panY });
         return;
       }
 
@@ -1187,8 +1347,22 @@ export function CanvasViewport({
 
       const nextPanX = pointerX - focusX * nextZoom;
       const nextPanY = pointerY - focusY * nextZoom;
-      applyViewport(runtime, nextZoom, nextPanX, nextPanY);
-      onViewportChangeRef.current({ zoom: Number(nextZoom.toFixed(3)), panX: Math.round(nextPanX), panY: Math.round(nextPanY) });
+
+      const shell = viewportShellRef.current;
+      const clampedPan = shell
+        ? clampPan(
+            nextPanX,
+            nextPanY,
+            nextZoom,
+            documentRef.current.canvas.width,
+            documentRef.current.canvas.height,
+            shell.clientWidth,
+            shell.clientHeight
+          )
+        : { panX: nextPanX, panY: nextPanY };
+
+      applyViewport(runtime, nextZoom, clampedPan.panX, clampedPan.panY);
+      onViewportChangeRef.current({ zoom: Number(nextZoom.toFixed(3)), panX: Math.round(clampedPan.panX), panY: Math.round(clampedPan.panY) });
       renderOverlay();
     };
 
@@ -1321,10 +1495,10 @@ export function CanvasViewport({
   }, [isSafeAreaHintDismissed]);
 
   return (
-    <div className="workspace__viewport-shell">
+    <div ref={viewportShellRef} className="workspace__viewport-shell">
       <div className="workspace__viewport-inner">
         <div className="workspace__viewport-board">
-          <div className="workspace__canvas-surface">
+          <div ref={canvasSurfaceRef} className="workspace__canvas-surface">
             <div className="workspace__canvas-stack" style={canvasSurfaceStyle}>
               <canvas ref={canvasRef} className="workspace__canvas" height={document.canvas.height} width={document.canvas.width} />
               <canvas

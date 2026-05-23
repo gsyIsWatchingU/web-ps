@@ -2,6 +2,7 @@ import { create } from "zustand";
 import {
   type CanvasBackgroundMode,
   createDefaultExportConfig,
+  createDefaultCanvasViewport,
   createDefaultDoodleStyle,
   createDefaultImageAiMeta,
   createDefaultImageFilters,
@@ -353,11 +354,7 @@ function stripTransientDocumentState(document: EditorDocument): EditorDocument {
         mode: document.canvas.displayBackground?.mode ?? ("grid" satisfies CanvasBackgroundMode),
         color: document.canvas.displayBackground?.color ?? "#fbf6ef"
       },
-      viewport: {
-        zoom: 0.5,
-        panX: 0,
-        panY: 0
-      }
+      viewport: createDefaultCanvasViewport()
     }
   };
 }
@@ -452,6 +449,30 @@ function sanitizeImageCrop(layer: ImageLayer, crop: Partial<ImageCrop>) {
     width,
     height
   } satisfies ImageCrop;
+}
+
+function replaceImageLayerSourceInPlace(
+  layer: ImageLayer,
+  source: string,
+  size: { width: number; height: number }
+): ImageLayer {
+  const visibleWidth = layer.crop.width * layer.transform.scaleX;
+  const visibleHeight = layer.crop.height * layer.transform.scaleY;
+
+  return {
+    ...layer,
+    source,
+    originalWidth: size.width,
+    originalHeight: size.height,
+    crop: createImageCrop(size.width, size.height),
+    transform: {
+      ...layer.transform,
+      x: layer.transform.x,
+      y: layer.transform.y,
+      scaleX: Number((visibleWidth / size.width).toFixed(6)),
+      scaleY: Number((visibleHeight / size.height).toFixed(6))
+    }
+  };
 }
 
 function sanitizeDecorationSize(size: Partial<Pick<DecorationLayer, "width" | "height">>) {
@@ -633,7 +654,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
             presetId: preset.id,
             width: preset.width,
             height: preset.height,
-            safeAreaInset: getDefaultSafeAreaInset(preset.width, preset.height)
+            safeAreaInset: getDefaultSafeAreaInset(preset.width, preset.height),
+            viewport: createDefaultCanvasViewport()
           },
           workflowMeta: {
             ...state.document.workflowMeta,
@@ -1668,11 +1690,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
           layers.map((entry) =>
             entry.id === layerId && entry.type === "image"
               ? {
-                  ...entry,
-                  source: result.resultUrl!,
-                  originalWidth: size.width,
-                  originalHeight: size.height,
-                  crop: createImageCrop(size.width, size.height),
+                  ...replaceImageLayerSourceInPlace(entry, result.resultUrl!, size),
                   aiMeta: {
                     ...entry.aiMeta,
                     lastAiError: null,
