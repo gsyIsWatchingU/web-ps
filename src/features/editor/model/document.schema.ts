@@ -155,6 +155,8 @@ const textLayerSchema = layerBaseSchema.extend({
   type: z.literal("text"),
   content: z.string(),
   textTemplateId: z.enum(textTemplateValues).nullable(),
+  businessComponentId: z.string().nullable().default(null),
+  businessComponentLabel: z.string().nullable().default(null),
   style: z.object({
     fontFamily: z.string(),
     fontSize: z.number(),
@@ -170,6 +172,8 @@ const textLayerSchema = layerBaseSchema.extend({
 
 const decorationLayerSchema = layerBaseSchema.extend({
   type: z.literal("decoration"),
+  businessComponentId: z.string().nullable().default(null),
+  businessComponentLabel: z.string().nullable().default(null),
   decorationKind: z.enum(decorationKindValues).default("shape"),
   shape: z
     .enum(decorationShapeValues)
@@ -285,5 +289,46 @@ export const editorDocumentSchema = z.object({
     targetOrigin: z.string(),
     sessionId: z.string().nullable()
   }),
+  templateMeta: z
+    .object({
+      templateId: z.string().nullable(),
+      templateName: z.string().nullable(),
+      templateVersion: z.number().int().positive(),
+      sceneType: z.string().nullable(),
+      platformPresetId: z.string().nullable(),
+      platformName: z.string().nullable(),
+      usageTip: z.string().nullable(),
+      aiSlots: z.array(z.string())
+    })
+    .default({
+      templateId: null,
+      templateName: null,
+      templateVersion: 1,
+      sceneType: null,
+      platformPresetId: null,
+      platformName: null,
+      usageTip: null,
+      aiSlots: []
+    }),
+  validation: z
+    .object({
+      status: z.enum(["idle", "ready"]),
+      summary: z.string(),
+      issues: z.array(
+        z.object({
+          id: z.string(),
+          severity: z.enum(["warning", "info"]),
+          passed: z.boolean(),
+          message: z.string()
+        })
+      ),
+      checkedAt: z.string().nullable()
+    })
+    .default({
+      status: "idle",
+      summary: "Validation not run yet.",
+      issues: [],
+      checkedAt: null
+    }),
   updatedAt: z.string()
 });

@@ -6,7 +6,9 @@ import {
   createDefaultDoodleStyle,
   createDefaultImageAiMeta,
   createDefaultImageFilters,
+  createDefaultTemplateMeta,
   createDefaultTextStyle,
+  createDefaultValidationState,
   createImageCrop,
   createInitialDocument,
   createLayerId,
@@ -37,6 +39,15 @@ import {
   type TextLayer,
   type TextTemplateId
 } from "../model/document";
+import {
+  applyPlatformPresetToDocument,
+  createTemplateDocument,
+  insertBusinessComponentLayer,
+  type BusinessComponentPresetId,
+  type PlatformPresetId,
+  type TemplateDefinitionId,
+  validateDocument
+} from "../model/ecommerce";
 import { editorDocumentSchema } from "../model/document.schema";
 import { runSeed3dTask } from "../runtime/aiBridge";
 import {
@@ -86,6 +97,9 @@ type EditorStore = {
   historyPast: HistoryEntry[];
   historyFuture: HistoryEntry[];
   setActiveTool: (tool: EditorTool) => void;
+  createDocumentFromTemplate: (templateId: TemplateDefinitionId) => void;
+  createBlankDocument: (presetId: PlatformPresetId) => void;
+  setPlatformPreset: (presetId: PlatformPresetId) => void;
   setCanvasPreset: (presetId: CanvasPresetId) => void;
   setCanvasDisplayBackground: (
     background: Partial<EditorDocument["canvas"]["displayBackground"]>
@@ -96,6 +110,7 @@ type EditorStore = {
   importImage: (file: File) => Promise<void>;
   addTextLayer: () => void;
   addDecorationLayer: () => void;
+  addBusinessComponent: (componentId: BusinessComponentPresetId) => void;
   addDoodleLayer: (
     points: DoodlePoint[],
     style?: Partial<Pick<DoodleLayer, "stroke" | "strokeWidth">>
@@ -161,11 +176,11 @@ type EditorStore = {
 const HISTORY_LIMIT = 60;
 
 function touchDocument(document: EditorDocument, layers?: EditorLayer[]) {
-  return {
+  return validateDocument({
     ...document,
     layers: layers ?? document.layers,
     updatedAt: new Date().toISOString()
-  };
+  });
 }
 
 function updateLayers(
@@ -223,6 +238,14 @@ function clearDocumentLayers(document: EditorDocument) {
   return touchDocument({
     ...document,
     layers: []
+  });
+}
+
+function normalizeCommerceFields(document: EditorDocument): EditorDocument {
+  return validateDocument({
+    ...document,
+    templateMeta: document.templateMeta ?? createDefaultTemplateMeta(),
+    validation: document.validation ?? createDefaultValidationState()
   });
 }
 
@@ -290,14 +313,14 @@ function loadInitialDocument(): EditorDocument {
   const fallback = createInitialDocument();
 
   if (typeof window === "undefined") {
-    return editorDocumentSchema.parse(fallback) as EditorDocument;
+    return normalizeCommerceFields(editorDocumentSchema.parse(fallback) as EditorDocument);
   }
 
   try {
     const raw = window.localStorage.getItem(fallback.draftMeta.storageKey);
 
     if (!raw) {
-      return editorDocumentSchema.parse(fallback) as EditorDocument;
+      return normalizeCommerceFields(editorDocumentSchema.parse(fallback) as EditorDocument);
     }
 
     const parsed = editorDocumentSchema.parse(JSON.parse(raw)) as EditorDocument;
@@ -325,16 +348,16 @@ function loadInitialDocument(): EditorDocument {
       normalizedExportConfig.height = parsed.canvas.height;
     }
 
-    return stripTransientDocumentState({
+    return normalizeCommerceFields(stripTransientDocumentState({
       ...parsed,
       exportConfig: normalizedExportConfig,
       workflowMeta: {
         ...parsed.workflowMeta,
         sceneTag: getCanvasPreset(parsed.canvas.presetId).scene
       }
-    });
+    }));
   } catch {
-    return editorDocumentSchema.parse(fallback) as EditorDocument;
+    return normalizeCommerceFields(editorDocumentSchema.parse(fallback) as EditorDocument);
   }
 }
 
@@ -627,6 +650,39 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       cropSession: tool === "crop" ? state.cropSession : null,
       repairSession: tool === "repair" ? state.repairSession : null
     })),
+  createDocumentFromTemplate: (templateId) =>
+    set(() => {
+      const document = createTemplateDocument(templateId);
+      const firstSelectable = document.layers[1]?.id ?? document.layers[0]?.id;
+
+      return {
+        activeTool: "select",
+        selectedLayerIds: firstSelectable ? [firstSelectable] : [],
+        document,
+        cropSession: null,
+        repairSession: null,
+        historyPast: [],
+        historyFuture: []
+      };
+    }),
+  createBlankDocument: (presetId) =>
+    set(() => {
+      const document = applyPlatformPresetToDocument(createInitialDocument(), presetId);
+
+      return {
+        activeTool: "select",
+        selectedLayerIds: getDefaultSelectedLayerIds(document),
+        document,
+        cropSession: null,
+        repairSession: null,
+        historyPast: [],
+        historyFuture: []
+      };
+    }),
+  setPlatformPreset: (presetId) =>
+    set((state) =>
+      commitDocumentChange(state, applyPlatformPresetToDocument(state.document, presetId))
+    ),
   setCanvasPreset: (presetId) =>
     set((state) => {
       const preset = getCanvasPreset(presetId);
@@ -756,6 +812,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         ),
         content: "输入卖点文案",
         textTemplateId: null,
+        businessComponentId: null,
+        businessComponentLabel: null,
         style: createDefaultTextStyle()
       };
       const normalized = normalizeLayerOrder([...state.document.layers, nextLayer]);
@@ -785,6 +843,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
           defaultSize.height
         ),
         decorationKind: "shape",
+        businessComponentId: null,
+        businessComponentLabel: null,
         shape: "heart",
         sticker: "sparkle",
         width: defaultSize.width,
@@ -799,6 +859,14 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         [nextLayer.id],
         { activeTool: "shape" }
       );
+    }),
+  addBusinessComponent: (componentId) =>
+    set((state) => {
+      const result = insertBusinessComponentLayer(state.document, componentId);
+
+      return commitDocumentChange(state, result.document, [result.layerId], {
+        activeTool: "text"
+      });
     }),
   addDoodleLayer: (points, style) =>
     set((state) => {
@@ -1305,11 +1373,14 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         mergedExportConfig.scale = mergedExportConfig.scalePercent / 100;
       }
 
-      return commitDocumentChange(state, {
-        ...state.document,
-        exportConfig: mergedExportConfig,
-        updatedAt: new Date().toISOString()
-      });
+      return commitDocumentChange(
+        state,
+        validateDocument({
+          ...state.document,
+          exportConfig: mergedExportConfig,
+          updatedAt: new Date().toISOString()
+        })
+      );
     }),
   recordWorkflowExport: () =>
     set((state) => ({

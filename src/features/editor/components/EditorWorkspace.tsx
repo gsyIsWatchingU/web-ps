@@ -16,6 +16,12 @@ import {
   type ImageCrop,
   type TextLayer
 } from "../model/document";
+import {
+  buildSuggestedExportFilename,
+  businessComponentPresets,
+  getPlatformPreset,
+  platformPresets
+} from "../model/ecommerce";
 import { hasAiConfig } from "../runtime/aiConfig";
 import { exportDocument } from "../runtime/exportDocument";
 import { renderPresetPreviewDataUrl } from "../runtime/lutEngine";
@@ -378,6 +384,7 @@ export function EditorWorkspace() {
   >({} as Record<(typeof imageFilterPresets)[number]["id"], string>);
   const {
     activeTool,
+    addBusinessComponent,
     cropSession,
     repairSession,
     addDecorationLayer,
@@ -406,6 +413,7 @@ export function EditorWorkspace() {
     selectedLayerIds,
     selectLayer,
     setActiveTool,
+    setPlatformPreset,
     setCanvasPreset,
     setCanvasDisplayBackground,
     setCanvasViewport,
@@ -454,6 +462,8 @@ export function EditorWorkspace() {
   const canRedo = historyFuture.length > 0;
   const viewport = document.canvas.viewport;
   const canvasDisplayBackground = document.canvas.displayBackground;
+  const platformPreset = getPlatformPreset(document.templateMeta.platformPresetId);
+  const suggestedExportFilename = buildSuggestedExportFilename(document);
   const aiConfigured = hasAiConfig();
   const activeCropDraft =
     cropSession && selectedImageLayer && cropSession.layerId === selectedImageLayer.id
@@ -1977,6 +1987,31 @@ export function EditorWorkspace() {
         <div className="workspace__column-content">
           {leftSidebarTab === "canvas" ? (
             <>
+              <section className="workspace__section">
+                <h3>平台预设</h3>
+                <div className="workspace__preset-grid">
+                  {platformPresets.map((preset) => (
+                    <button
+                      key={preset.id}
+                      className={`workspace__preset-button ${document.templateMeta.platformPresetId === preset.id ? "is-active" : ""}`}
+                      onClick={() => setPlatformPreset(preset.id)}
+                      type="button"
+                    >
+                      <strong>{preset.label}</strong>
+                    </button>
+                  ))}
+                </div>
+                <div className="workspace__property-list workspace__property-list--tight">
+                  <div className="workspace__property workspace__property--highlight">
+                    <span className="workspace__property-label">当前模板</span>
+                    <strong>{document.templateMeta.templateName ?? "自由编辑模式"}</strong>
+                    <p className="workspace__footer-note">
+                      {document.templateMeta.usageTip ?? "使用模板中心从电商布局模板开始创作。"}
+                    </p>
+                    <p className="workspace__footer-note">复制区域：{platformPreset.copyRegionHint}</p>
+                  </div>
+                </div>
+              </section>
 
 
               <section className="workspace__section">
@@ -2070,6 +2105,21 @@ export function EditorWorkspace() {
                       <Tooltip>{tool.hint}</Tooltip>
                     </button>
                   ))}
+              </div>
+              <div className="workspace__section-separator" />
+              <h3>业务组件</h3>
+              <div className="workspace__tool-stack">
+                {businessComponentPresets.map((component) => (
+                  <button
+                    key={component.id}
+                    className="workspace__tool-button workspace__tool-button--stack"
+                    onClick={() => addBusinessComponent(component.id)}
+                    type="button"
+                  >
+                    <strong>{component.label}</strong>
+                    <span>{component.description}</span>
+                  </button>
+                ))}
               </div>
             </section>
           ) : null}
@@ -2200,14 +2250,14 @@ export function EditorWorkspace() {
 
         <section className="workspace__statusbar">
           <div className="workspace__status-group">
-            <span>Layer: {selectedLayer?.name ?? "None"}</span>
-            <span>Autosave: {document.draftMeta.enabled ? formatTime(lastAutoSavedAt) : "Off"}</span>
-            <span>Version: {String(document.workflowMeta.version).padStart(3, "0")}</span>
+            <span>图层：{selectedLayer?.name ?? "无"}</span>
+            <span>自动保存：{document.draftMeta.enabled ? formatTime(lastAutoSavedAt) : "关闭"}</span>
+            <span>版本：{String(document.workflowMeta.version).padStart(3, "0")}</span>
           </div>
           <div className="workspace__status-group">
             <span>安全区: {document.canvas.safeAreaInset}px</span>
-            <span>Zoom: {Math.round(viewport.zoom * 100)}%</span>
-            <span>Pan: {Math.round(viewport.panX)} / {Math.round(viewport.panY)}</span>
+            <span>缩放：{Math.round(viewport.zoom * 100)}%</span>
+            <span>平移：{Math.round(viewport.panX)} / {Math.round(viewport.panY)}</span>
           </div>
         </section>
       </main>
@@ -2251,7 +2301,7 @@ export function EditorWorkspace() {
             <section className="workspace__section workspace__section--feedback">
               <div className="workspace__property-list workspace__property-list--tight">
                 {lastExportedFilename ? (
-                  <p className="workspace__footer-note">Last export: {lastExportedFilename}</p>
+                  <p className="workspace__footer-note">上次导出：{lastExportedFilename}</p>
                 ) : null}
                 {feedbackMessage ? <p className="workspace__footer-note">{feedbackMessage}</p> : null}
               </div>
@@ -2365,7 +2415,7 @@ export function EditorWorkspace() {
                         />
                       </label>
                       <button
-                        aria-label={isAspectLocked ? "Unlock ratio" : "Lock ratio"}
+                        aria-label={isAspectLocked ? "解锁比例" : "锁定比例"}
                         className={`workspace__icon-button workspace__icon-button--lock-toggle ${isAspectLocked ? "is-active" : ""}`}
                         disabled={isFixedSizePreset}
                         onClick={handleExportLockToggle}
@@ -2434,6 +2484,43 @@ export function EditorWorkspace() {
                   </div>
                 )}
               </div>
+            </div>
+
+            <div className="workspace__property-list workspace__property-list--tight">
+              <div className="workspace__property workspace__property--highlight">
+                <span className="workspace__property-label">建议文件名</span>
+                <strong>{suggestedExportFilename}</strong>
+                <p className="workspace__footer-note">
+                  推荐格式：{platformPreset.recommendedFormat.toUpperCase()}
+                </p>
+              </div>
+              <div className="workspace__property">
+                <span className="workspace__property-label">导出前检查</span>
+                <p className="workspace__footer-note">{document.validation.summary}</p>
+                <div className="workspace__checklist">
+                  {document.validation.issues.map((issue) => (
+                    <div
+                      key={issue.id}
+                      className={`workspace__checklist-item ${issue.passed ? "is-passed" : "is-warning"}`}
+                    >
+                      <strong>{issue.passed ? "通过" : issue.severity.toUpperCase()}</strong>
+                      <span>{issue.message}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {document.templateMeta.aiSlots.length > 0 ? (
+                <div className="workspace__property">
+                  <span className="workspace__property-label">AI 功能</span>
+                  <div className="workspace__inline-actions">
+                    {document.templateMeta.aiSlots.map((slot) => (
+                      <span className="workspace__chip" key={slot}>
+                        {slot}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="workspace__dialog-footer">

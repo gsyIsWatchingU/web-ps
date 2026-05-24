@@ -613,79 +613,8 @@ function drawSafeAreaOverlay(
   context.setLineDash([18, 10]);
   context.strokeRect(safeX, safeY, safeWidth, safeHeight);
 
-  if (options?.hideHint) {
-    context.restore();
-    return null;
-  }
-
-  const safeAreaHint = "重要内容请勿超出安全区，以免在不同投放尺寸或平台裁切时被遮挡或截断。";
-  const hintPaddingX = 14;
-  const hintPaddingY = 10;
-  const hintOffset = 12;
-  const closeButtonSize = 22;
-  const closeButtonGap = 8;
-  const maxHintWidth = Math.min(360, Math.max(180, safeWidth - hintOffset * 2 - hintPaddingX * 2));
-  const hintLines: string[] = [];
-
-  context.font = '600 16px "Segoe UI"';
-  context.textBaseline = "top";
-
-  let currentLine = "";
-  for (const char of safeAreaHint) {
-    const nextLine = `${currentLine}${char}`;
-    if (currentLine && context.measureText(nextLine).width > maxHintWidth) {
-      hintLines.push(currentLine);
-      currentLine = char;
-    } else {
-      currentLine = nextLine;
-    }
-  }
-  if (currentLine) {
-    hintLines.push(currentLine);
-  }
-
-  const visibleLines = hintLines.slice(0, 2);
-  const lineHeight = 22;
-  const textWidth = Math.max(...visibleLines.map((line) => context.measureText(line).width), 0);
-  const hintBoxWidth = Math.min(
-    safeWidth - hintOffset * 2,
-    textWidth + hintPaddingX * 2 + closeButtonSize + closeButtonGap
-  );
-  const hintBoxHeight = visibleLines.length * lineHeight + hintPaddingY * 2;
-  const hintX = safeX + hintOffset;
-  const hintY = safeY + hintOffset;
-  const closeButtonX = hintX + hintBoxWidth - hintPaddingX - closeButtonSize;
-  const closeButtonY = hintY + hintPaddingY - 1;
-
-  context.fillStyle = "rgba(255, 248, 238, 0.94)";
-  context.fillRect(hintX, hintY, hintBoxWidth, hintBoxHeight);
-
-  context.strokeStyle = "rgba(195, 111, 73, 0.28)";
-  context.lineWidth = 1;
-  context.setLineDash([]);
-  context.strokeRect(hintX, hintY, hintBoxWidth, hintBoxHeight);
-
-  context.fillStyle = "rgba(255, 248, 238, 0.98)";
-  context.fillRect(closeButtonX, closeButtonY, closeButtonSize, closeButtonSize);
-
-  context.strokeStyle = "rgba(195, 111, 73, 0.36)";
-  context.strokeRect(closeButtonX, closeButtonY, closeButtonSize, closeButtonSize);
-
-  context.fillStyle = "rgba(195, 111, 73, 0.94)";
-  visibleLines.forEach((line, index) => {
-    context.fillText(line, hintX + hintPaddingX, hintY + hintPaddingY + index * lineHeight);
-  });
-
-  context.font = '700 15px "Segoe UI"';
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.fillText("×", closeButtonX + closeButtonSize / 2, closeButtonY + closeButtonSize / 2 + 0.5);
   context.restore();
-
-  return {
-    cardRect: { x: hintX, y: hintY, width: hintBoxWidth, height: hintBoxHeight },
-    closeButtonRect: { x: closeButtonX, y: closeButtonY, width: closeButtonSize, height: closeButtonSize }
-  };
+  return null;
 }
 
 export function CanvasViewport({

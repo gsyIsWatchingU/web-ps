@@ -1,5 +1,6 @@
 import { Canvas } from "fabric";
 import type { EditorDocument } from "../model/document";
+import { buildSuggestedExportFilename } from "../model/ecommerce";
 import { seedCanvas } from "./seedCanvas";
 
 function getExportQuality(config: EditorDocument["exportConfig"]) {
@@ -33,10 +34,9 @@ async function loadDataUrlImage(source: string) {
 
 function buildExportFilename(document: EditorDocument) {
   const extension = document.exportConfig.format === "jpeg" ? "jpg" : "png";
-  const scene = document.canvas.presetId.replace(":", "x");
-  const version = `v${String(document.workflowMeta.version).padStart(3, "0")}`;
+  const basename = buildSuggestedExportFilename(document);
 
-  return `${document.name || "web-ps-export"}-${scene}-${version}.${extension}`;
+  return `${basename}.${extension}`;
 }
 
 function downloadDataUrl(dataUrl: string, filename: string) {

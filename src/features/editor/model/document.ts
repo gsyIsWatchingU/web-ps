@@ -174,6 +174,8 @@ export type TextLayer = LayerBase & {
   type: "text";
   content: string;
   textTemplateId: TextTemplateId | null;
+  businessComponentId: string | null;
+  businessComponentLabel: string | null;
   style: {
     fontFamily: string;
     fontSize: number;
@@ -189,6 +191,8 @@ export type TextLayer = LayerBase & {
 
 export type DecorationLayer = LayerBase & {
   type: "decoration";
+  businessComponentId: string | null;
+  businessComponentLabel: string | null;
   decorationKind: DecorationKind;
   shape: DecorationShapeId;
   sticker: DecorationStickerId;
@@ -259,6 +263,31 @@ export type ExportConfig = {
   scalePercent: number;
 };
 
+export type TemplateMeta = {
+  templateId: string | null;
+  templateName: string | null;
+  templateVersion: number;
+  sceneType: string | null;
+  platformPresetId: string | null;
+  platformName: string | null;
+  usageTip: string | null;
+  aiSlots: string[];
+};
+
+export type ValidationIssue = {
+  id: string;
+  severity: "warning" | "info";
+  passed: boolean;
+  message: string;
+};
+
+export type ValidationState = {
+  status: "idle" | "ready";
+  summary: string;
+  issues: ValidationIssue[];
+  checkedAt: string | null;
+};
+
 export type DraftMeta = {
   enabled: boolean;
   storageKey: string;
@@ -283,6 +312,8 @@ export type EditorDocument = {
   exportConfig: ExportConfig;
   draftMeta: DraftMeta;
   workflowMeta: WorkflowMeta;
+  templateMeta: TemplateMeta;
+  validation: ValidationState;
   updatedAt: string;
 };
 
@@ -820,6 +851,28 @@ export function createDefaultExportConfig(
   };
 }
 
+export function createDefaultTemplateMeta(): TemplateMeta {
+  return {
+    templateId: null,
+    templateName: null,
+    templateVersion: 1,
+    sceneType: null,
+    platformPresetId: null,
+    platformName: null,
+    usageTip: null,
+    aiSlots: []
+  };
+}
+
+export function createDefaultValidationState(): ValidationState {
+  return {
+    status: "idle",
+    summary: "Validation not run yet.",
+    issues: [],
+    checkedAt: null
+  };
+}
+
 export function getDefaultSafeAreaInset(width: number, height: number) {
   const shortEdge = Math.min(width, height);
   return Math.round(Math.max(36, Math.min(shortEdge * 0.045, 64)));
@@ -881,6 +934,8 @@ export function createInitialDocument(): EditorDocument {
         },
         content: "爆款主标题",
         textTemplateId: "title",
+        businessComponentId: "headline",
+        businessComponentLabel: "Headline",
         style: createDefaultTextStyle()
       },
       {
@@ -901,6 +956,8 @@ export function createInitialDocument(): EditorDocument {
           flipY: false
         },
         decorationKind: "shape",
+        businessComponentId: "price-tag",
+        businessComponentLabel: "Price Tag",
         shape: "heart",
         sticker: "sparkle",
         width: 180,
@@ -923,6 +980,8 @@ export function createInitialDocument(): EditorDocument {
       targetOrigin: "*",
       sessionId: null
     },
+    templateMeta: createDefaultTemplateMeta(),
+    validation: createDefaultValidationState(),
     updatedAt: new Date().toISOString()
   };
 }

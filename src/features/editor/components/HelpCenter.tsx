@@ -33,7 +33,7 @@ export function HelpCenter({ onClose }: HelpCenterProps) {
     <div className="help-center">
       <div className="help-center__hero">
         <div>
-          <p className="eyebrow">Help Center</p>
+          <p className="eyebrow">帮助中心</p>
           <h1>Web 修图工作台教程</h1>
           <p className="help-center__intro">
             这套教程面向运营、设计和投放同学，帮助你把 AI 初稿快速修成可投放素材。
