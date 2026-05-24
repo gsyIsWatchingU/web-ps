@@ -1,4 +1,5 @@
 import type { ImageFilters, ImageLayer, ImagePresetFilterId } from "../model/document";
+import { getImageLayerSource, isPendingImageLayer } from "../model/document";
 import { getPresetCubeText, lutPresetConfigs } from "./lutPresets";
 
 type CubeLut = {
@@ -320,18 +321,19 @@ async function renderLutImageDataUrl(
 }
 
 export function renderProcessedImageSource(layer: ImageLayer) {
-  if (layer.source === "pending-upload") {
+  if (isPendingImageLayer(layer)) {
     return Promise.resolve(layer.source);
   }
 
-  const key = createFilterCacheKey(layer.source, layer.presetFilterId, layer.filters);
+  const source = getImageLayerSource(layer);
+  const key = createFilterCacheKey(source, layer.presetFilterId, layer.filters);
   const cached = processedImageCache.get(key);
 
   if (cached) {
     return cached;
   }
 
-  const pending = renderLutImageDataUrl(layer.source, layer.presetFilterId, layer.filters);
+  const pending = renderLutImageDataUrl(source, layer.presetFilterId, layer.filters);
   processedImageCache.set(key, pending);
   return pending;
 }

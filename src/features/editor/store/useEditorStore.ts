@@ -1,15 +1,18 @@
 import { create } from "zustand";
 import {
   type CanvasBackgroundMode,
+  createDefaultAssetRegistry,
   createDefaultExportConfig,
   createDefaultCanvasViewport,
   createDefaultDoodleStyle,
   createDefaultImageAiMeta,
   createDefaultImageFilters,
+  createDefaultRenderRequest,
   createDefaultTemplateMeta,
   createDefaultTextStyle,
   createDefaultValidationState,
   createImageCrop,
+  createBlankDocument,
   createInitialDocument,
   createLayerId,
   getCanvasPreset,
@@ -17,7 +20,9 @@ import {
   getDefaultSafeAreaInset,
   getEnhanceProfile,
   getImageFilterPreset,
+  getImageLayerSource,
   getTextTemplatePreset,
+  isPendingImageLayer,
   normalizeLayerOrder,
   type CanvasPresetId,
   type CanvasViewport,
@@ -50,6 +55,7 @@ import {
 } from "../model/ecommerce";
 import { editorDocumentSchema } from "../model/document.schema";
 import { runSeed3dTask } from "../runtime/aiBridge";
+import { uploadImageAsset } from "../runtime/backendBridge";
 import {
   buildRepairPrompt,
   type RepairMode,
@@ -104,6 +110,7 @@ type EditorStore = {
   setCanvasDisplayBackground: (
     background: Partial<EditorDocument["canvas"]["displayBackground"]>
   ) => void;
+  setCanvasSafeAreaInset: (inset: number) => void;
   setCanvasViewport: (viewport: Partial<CanvasViewport>) => void;
   selectLayer: (layerId: string) => void;
   setSelectedLayerIds: (layerIds: string[]) => void;
@@ -179,6 +186,7 @@ function touchDocument(document: EditorDocument, layers?: EditorLayer[]) {
   return validateDocument({
     ...document,
     layers: layers ?? document.layers,
+    version: document.version + 1,
     updatedAt: new Date().toISOString()
   });
 }
@@ -237,13 +245,44 @@ function clamp(value: number, min: number, max: number) {
 function clearDocumentLayers(document: EditorDocument) {
   return touchDocument({
     ...document,
-    layers: []
+    layers: [],
+    assetRegistry: createDefaultAssetRegistry()
   });
+}
+
+function buildRenderRequest(document: EditorDocument) {
+  return {
+    ...document.renderRequest,
+    format: document.exportConfig.format,
+    quality: document.exportConfig.quality,
+    qualityPreset: document.exportConfig.qualityPreset,
+    resizeMode: document.exportConfig.resizeMode,
+    sizePreset: document.exportConfig.sizePreset,
+    width: document.exportConfig.width,
+    height: document.exportConfig.height,
+    scalePercent: document.exportConfig.scalePercent,
+    background: {
+      ...document.renderRequest.background,
+      color: document.canvas.backgroundColor
+    }
+  };
 }
 
 function normalizeCommerceFields(document: EditorDocument): EditorDocument {
   return validateDocument({
     ...document,
+    version: document.version ?? 1,
+    renderRequest:
+      document.renderRequest ??
+      createDefaultRenderRequest(
+        {
+          width: document.canvas.width,
+          height: document.canvas.height,
+          backgroundColor: document.canvas.backgroundColor
+        },
+        document.exportConfig
+      ),
+    assetRegistry: document.assetRegistry ?? createDefaultAssetRegistry(),
     templateMeta: document.templateMeta ?? createDefaultTemplateMeta(),
     validation: document.validation ?? createDefaultValidationState()
   });
@@ -251,7 +290,7 @@ function normalizeCommerceFields(document: EditorDocument): EditorDocument {
 
 function loadImageAsset(file: File) {
   return new Promise<{
-    source: string;
+    sourceDataUrl: string;
     width: number;
     height: number;
   }>((resolve, reject) => {
@@ -269,7 +308,7 @@ function loadImageAsset(file: File) {
 
       image.onload = () => {
         resolve({
-          source,
+          sourceDataUrl: source,
           width: image.naturalWidth || image.width,
           height: image.naturalHeight || image.height
         });
@@ -351,6 +390,16 @@ function loadInitialDocument(): EditorDocument {
     return normalizeCommerceFields(stripTransientDocumentState({
       ...parsed,
       exportConfig: normalizedExportConfig,
+      renderRequest:
+        parsed.renderRequest ??
+        createDefaultRenderRequest(
+          {
+            width: parsed.canvas.width,
+            height: parsed.canvas.height,
+            backgroundColor: parsed.canvas.backgroundColor
+          },
+          normalizedExportConfig
+        ),
       workflowMeta: {
         ...parsed.workflowMeta,
         sceneTag: getCanvasPreset(parsed.canvas.presetId).scene
@@ -477,7 +526,13 @@ function sanitizeImageCrop(layer: ImageLayer, crop: Partial<ImageCrop>) {
 function replaceImageLayerSourceInPlace(
   layer: ImageLayer,
   source: string,
-  size: { width: number; height: number }
+  size: { width: number; height: number },
+  options?: {
+    assetId?: string | null;
+    sourceUrl?: string | null;
+    sourceDataUrl?: string | null;
+    sourceOrigin?: ImageLayer["sourceOrigin"];
+  }
 ): ImageLayer {
   const visibleWidth = layer.crop.width * layer.transform.scaleX;
   const visibleHeight = layer.crop.height * layer.transform.scaleY;
@@ -485,6 +540,10 @@ function replaceImageLayerSourceInPlace(
   return {
     ...layer,
     source,
+    assetId: options?.assetId ?? layer.assetId,
+    sourceUrl: options?.sourceUrl ?? null,
+    sourceDataUrl: options?.sourceDataUrl ?? null,
+    sourceOrigin: options?.sourceOrigin ?? layer.sourceOrigin,
     originalWidth: size.width,
     originalHeight: size.height,
     crop: createImageCrop(size.width, size.height),
@@ -603,11 +662,11 @@ function layerSupportsAi(layer: ImageLayer) {
 }
 
 async function renderLayerCropDataUrl(layer: ImageLayer) {
-  if (layer.source === "pending-upload") {
+  if (isPendingImageLayer(layer)) {
     throw new Error("请先导入图片后再执行 AI 操作。");
   }
 
-  const image = await loadImageElement(layer.source);
+  const image = await loadImageElement(getImageLayerSource(layer));
   const canvas = window.document.createElement("canvas");
 
   canvas.width = layer.crop.width;
@@ -636,9 +695,7 @@ async function renderLayerCropDataUrl(layer: ImageLayer) {
 
 export const useEditorStore = create<EditorStore>((set, get) => ({
   activeTool: "select",
-  selectedLayerIds: [initialDocument.layers[1]?.id ?? initialDocument.layers[0]?.id].filter(
-    (layerId): layerId is string => Boolean(layerId)
-  ),
+  selectedLayerIds: getDefaultSelectedLayerIds(initialDocument),
   document: initialDocument,
   cropSession: null,
   repairSession: null,
@@ -667,7 +724,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     }),
   createBlankDocument: (presetId) =>
     set(() => {
-      const document = applyPlatformPresetToDocument(createInitialDocument(), presetId);
+      const document = applyPlatformPresetToDocument(createBlankDocument(), presetId);
 
       return {
         activeTool: "select",
@@ -726,6 +783,19 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
                   height: preset.height
                 }
               : state.document.exportConfig,
+          renderRequest:
+            state.document.exportConfig.resizeMode === "fixed" &&
+            state.document.exportConfig.sizePreset === "group"
+              ? {
+                  ...state.document.renderRequest,
+                  width: preset.width,
+                  height: preset.height,
+                  background: {
+                    ...state.document.renderRequest.background,
+                    color: state.document.canvas.backgroundColor
+                  }
+                }
+              : state.document.renderRequest,
           layers: nextLayers
         })
       );
@@ -740,9 +810,33 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
             ...state.document.canvas.displayBackground,
             ...background
           }
+        },
+        renderRequest: {
+          ...state.document.renderRequest,
+          background: {
+            ...state.document.renderRequest.background,
+            color: state.document.canvas.backgroundColor
+          }
         }
       })
     })),
+  setCanvasSafeAreaInset: (inset) =>
+    set((state) => {
+      const maxInset = Math.floor(
+        Math.min(state.document.canvas.width, state.document.canvas.height) / 2
+      );
+      const safeAreaInset = Number.isFinite(inset) ? clamp(Math.round(inset), 0, maxInset) : 0;
+
+      return {
+        document: touchDocument({
+          ...state.document,
+          canvas: {
+            ...state.document.canvas,
+            safeAreaInset
+          }
+        })
+      };
+    }),
   setCanvasViewport: (viewport) =>
     set((state) => ({
       document: {
@@ -760,10 +854,11 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   setSelectedLayerIds: (layerIds) => set({ selectedLayerIds: layerIds }),
   importImage: async (file) => {
     const asset = await loadImageAsset(file);
+    const layerId = createLayerId("image");
 
     set((state) => {
       const nextLayer: EditorLayer = {
-        id: createLayerId("image"),
+        id: layerId,
         type: "image",
         name: file.name.replace(/\.[^.]+$/, "") || "导入图片",
         visible: true,
@@ -776,7 +871,11 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
           asset.width,
           asset.height
         ),
-        source: asset.source,
+        source: asset.sourceDataUrl,
+        assetId: null,
+        sourceUrl: null,
+        sourceDataUrl: asset.sourceDataUrl,
+        sourceOrigin: "local",
         originalWidth: asset.width,
         originalHeight: asset.height,
         crop: createImageCrop(asset.width, asset.height),
@@ -793,6 +892,43 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         [nextLayer.id]
       );
     });
+
+    try {
+      const uploadedAsset = await uploadImageAsset(file);
+
+      if (!uploadedAsset) {
+        return;
+      }
+
+      set((state) =>
+        commitDocumentChange(
+          state,
+          updateLayers(
+            {
+              ...state.document,
+              assetRegistry: {
+                ...state.document.assetRegistry,
+                [uploadedAsset.assetId]: uploadedAsset
+              }
+            },
+            (layers) =>
+              layers.map((layer) =>
+                layer.id === layerId && layer.type === "image"
+                  ? {
+                      ...layer,
+                      assetId: uploadedAsset.assetId,
+                      sourceUrl: uploadedAsset.sourceUrl,
+                      sourceOrigin: "remote"
+                    }
+                  : layer
+              )
+          ),
+          [layerId]
+        )
+      );
+    } catch {
+      // Keep local editing available even when the backend upload path is unavailable.
+    }
   },
   addTextLayer: () =>
     set((state) => {
@@ -1375,11 +1511,20 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
       return commitDocumentChange(
         state,
-        validateDocument({
-          ...state.document,
-          exportConfig: mergedExportConfig,
-          updatedAt: new Date().toISOString()
-        })
+        validateDocument(
+          (() => {
+            const nextDocument = {
+              ...state.document,
+              exportConfig: mergedExportConfig,
+              updatedAt: new Date().toISOString()
+            };
+
+            return {
+              ...nextDocument,
+              renderRequest: buildRenderRequest(nextDocument)
+            };
+          })()
+        )
       );
     }),
   recordWorkflowExport: () =>
@@ -1711,6 +1856,11 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       const prompt = buildRepairPrompt(layer, state.repairSession, maskAnalysis);
       const mode: RepairMode = "guided_repaint";
       const result = await runImageRepairTask({
+        documentId: state.document.id,
+        documentVersion: state.document.version,
+        layerId,
+        assetId: layer.assetId,
+        crop: layer.crop,
         imageDataUrl,
         maskDataUrl,
         guideDataUrl,
@@ -1761,7 +1911,12 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
           layers.map((entry) =>
             entry.id === layerId && entry.type === "image"
               ? {
-                  ...replaceImageLayerSourceInPlace(entry, result.resultUrl!, size),
+                  ...replaceImageLayerSourceInPlace(entry, result.resultUrl!, size, {
+                    assetId: null,
+                    sourceUrl: result.resultUrl,
+                    sourceDataUrl: null,
+                    sourceOrigin: "generated"
+                  }),
                   aiMeta: {
                     ...entry.aiMeta,
                     lastAiError: null,
@@ -1841,7 +1996,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
     const targetUrl = customUrl && (customUrl.startsWith("http://") || customUrl.startsWith("https://"))
       ? customUrl
-      : layer.source;
+      : getImageLayerSource(layer);
 
     const isValidImageSource = 
       targetUrl.startsWith("http://") || 

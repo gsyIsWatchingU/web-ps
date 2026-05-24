@@ -1,5 +1,7 @@
 import {
   createDefaultExportConfig,
+  createDefaultAssetRegistry,
+  createDefaultRenderRequest,
   createDefaultImageAiMeta,
   createDefaultImageFilters,
   createDefaultTemplateMeta,
@@ -740,6 +742,10 @@ export function createTemplateDocument(templateId: TemplateDefinitionId): Editor
         scaleY: layout.image.scaleY
       },
       source: "pending-upload",
+      assetId: null,
+      sourceUrl: null,
+      sourceDataUrl: null,
+      sourceOrigin: "local",
       originalWidth: 960,
       originalHeight: 960,
       crop: createImageCrop(960, 960),
@@ -762,6 +768,7 @@ export function createTemplateDocument(templateId: TemplateDefinitionId): Editor
 
   const document: EditorDocument = {
     id: `template-${template.id}`,
+    version: 1,
     name: template.label,
     canvas: {
       presetId: canvasPreset.id,
@@ -781,6 +788,15 @@ export function createTemplateDocument(templateId: TemplateDefinitionId): Editor
     },
     layers,
     exportConfig,
+    renderRequest: createDefaultRenderRequest(
+      {
+        width: canvasPreset.width,
+        height: canvasPreset.height,
+        backgroundColor: layout.canvasBackground
+      },
+      exportConfig
+    ),
+    assetRegistry: createDefaultAssetRegistry(),
     draftMeta: {
       enabled: true,
       storageKey: "web-ps/editor-draft",
@@ -834,6 +850,17 @@ export function applyPlatformPresetToDocument(
       width: canvasPreset.width,
       height: canvasPreset.height,
       sizePreset: "group"
+    },
+    renderRequest: {
+      ...document.renderRequest,
+      format: platformPreset.recommendedFormat,
+      width: canvasPreset.width,
+      height: canvasPreset.height,
+      sizePreset: "group",
+      background: {
+        ...document.renderRequest.background,
+        color: document.canvas.backgroundColor
+      }
     },
     workflowMeta: {
       ...document.workflowMeta,

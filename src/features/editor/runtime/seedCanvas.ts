@@ -19,6 +19,7 @@ import type {
   ImageLayer,
   TextLayer
 } from "../model/document";
+import { isPendingImageLayer } from "../model/document";
 import { renderProcessedImageSource } from "./lutEngine";
 
 type SeedCanvasOptions = {
@@ -124,7 +125,7 @@ async function createImageObject(
   layer: ImageLayer,
   cropPreview?: SeedCanvasOptions["cropPreview"]
 ) {
-  if (layer.source === "pending-upload") {
+  if (isPendingImageLayer(layer)) {
     return createImagePlaceholder(layer);
   }
 

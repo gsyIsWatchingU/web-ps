@@ -80,6 +80,10 @@ const layerBaseSchema = z.object({
 const imageLayerSchema = layerBaseSchema.extend({
   type: z.literal("image"),
   source: z.string(),
+  assetId: z.string().nullable().default(null),
+  sourceUrl: z.string().nullable().default(null),
+  sourceDataUrl: z.string().nullable().default(null),
+  sourceOrigin: z.enum(["local", "remote", "generated"]).default("local"),
   originalWidth: z.number().positive(),
   originalHeight: z.number().positive(),
   crop: z.object({
@@ -242,8 +246,39 @@ const exportConfigSchema = z.union([
     }))
 ]);
 
+const renderRequestSchema = z
+  .object({
+    format: z.enum(["png", "jpeg"]),
+    quality: z.number().min(0).max(1),
+    qualityPreset: z.enum(["standard", "high"]),
+    resizeMode: z.enum(["fixed", "scale"]),
+    sizePreset: z.enum(["group", "free", "1inch", "2inch"]),
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+    scalePercent: z.number().positive(),
+    background: z.object({
+      color: z.string(),
+      transparent: z.boolean()
+    })
+  })
+  .default({
+    format: "png",
+    quality: 0.92,
+    qualityPreset: "high",
+    resizeMode: "fixed",
+    sizePreset: "group",
+    width: 1080,
+    height: 1350,
+    scalePercent: 100,
+    background: {
+      color: "#fbf6ef",
+      transparent: false
+    }
+  });
+
 export const editorDocumentSchema = z.object({
   id: z.string(),
+  version: z.number().int().positive().default(1),
   name: z.string(),
   canvas: z.object({
     presetId: z.enum(presetIds),
@@ -275,6 +310,21 @@ export const editorDocumentSchema = z.object({
     ])
   ),
   exportConfig: exportConfigSchema,
+  renderRequest: renderRequestSchema.optional(),
+  assetRegistry: z
+    .record(
+      z.object({
+        assetId: z.string(),
+        sourceUrl: z.string(),
+        originalWidth: z.number().positive(),
+        originalHeight: z.number().positive(),
+        mimeType: z.string().nullable().default(null),
+        sizeBytes: z.number().int().nonnegative().nullable().default(null),
+        hash: z.string().nullable().default(null),
+        createdAt: z.string()
+      })
+    )
+    .default({}),
   draftMeta: z.object({
     enabled: z.boolean(),
     storageKey: z.string(),

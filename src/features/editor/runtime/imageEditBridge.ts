@@ -1,4 +1,5 @@
-import type { ImageLayer, RepairStroke } from "../model/document";
+import type { AiImageEditRequest, ImageLayer, RepairStroke } from "../model/document";
+import { getImageLayerSource, isPendingImageLayer } from "../model/document";
 import { aiConfig, hasAiConfig } from "./aiConfig";
 
 export type RepairMode = "guided_repaint" | "inpainting";
@@ -21,6 +22,11 @@ export type ImageRepairTaskResult = {
 };
 
 type ImageRepairTaskInput = {
+  documentId?: string;
+  documentVersion?: number;
+  layerId?: string;
+  assetId?: string | null;
+  crop?: ImageLayer["crop"];
   imageDataUrl: string;
   maskDataUrl: string;
   guideDataUrl?: string;
@@ -363,11 +369,11 @@ function renderRepairGuideOverlayCanvas(layer: ImageLayer, strokes: RepairStroke
 }
 
 export async function renderImageLayerCropDataUrl(layer: ImageLayer) {
-  if (layer.source === "pending-upload") {
+  if (isPendingImageLayer(layer)) {
     throw new Error("Please import an image before running AI repair.");
   }
 
-  const image = await loadImageElement(layer.source);
+  const image = await loadImageElement(getImageLayerSource(layer));
   const canvas = createCanvas(layer.crop.width, layer.crop.height);
   const context = getCanvasContext(canvas, "Failed to create repair input canvas.");
 
@@ -391,11 +397,11 @@ export async function renderRepairMaskDataUrl(layer: ImageLayer, strokes: Repair
 }
 
 export async function renderRepairGuideDataUrl(layer: ImageLayer, strokes: RepairStroke[]) {
-  if (layer.source === "pending-upload") {
+  if (isPendingImageLayer(layer)) {
     throw new Error("Please import an image before running AI repair.");
   }
 
-  const image = await loadImageElement(layer.source);
+  const image = await loadImageElement(getImageLayerSource(layer));
   const canvas = createCanvas(layer.crop.width, layer.crop.height);
   const context = getCanvasContext(canvas, "Failed to create repair guide canvas.");
   const overlayCanvas = renderRepairGuideOverlayCanvas(layer, strokes);
@@ -703,6 +709,11 @@ async function pollGuidedRepairTask(taskId: string, model: string): Promise<Imag
 }
 
 async function runGuidedRepaintTask({
+  documentId,
+  documentVersion,
+  layerId,
+  assetId,
+  crop,
   imageDataUrl,
   guideDataUrl,
   prompt,
@@ -731,6 +742,15 @@ async function runGuidedRepaintTask({
       model: providerModel,
       prompt: prompt.trim(),
       image: [imageDataUrl, guideDataUrl],
+      edit_request: {
+        documentId,
+        documentVersion,
+        layerId,
+        assetId: assetId ?? null,
+        crop,
+        mode: "guided_repaint",
+        prompt: prompt.trim()
+      } satisfies Partial<AiImageEditRequest>,
       sequential_image_generation: "disabled",
       response_format: "url",
       size: "2K",
@@ -785,6 +805,11 @@ async function runGuidedRepaintTask({
 }
 
 async function runInpaintingTask({
+  documentId,
+  documentVersion,
+  layerId,
+  assetId,
+  crop,
   imageDataUrl,
   maskDataUrl,
   guideDataUrl,
@@ -808,6 +833,16 @@ async function runInpaintingTask({
       model: providerModel,
       prompt: prompt.trim(),
       image: images,
+      mask: maskDataUrl,
+      edit_request: {
+        documentId,
+        documentVersion,
+        layerId,
+        assetId: assetId ?? null,
+        crop,
+        mode: "inpainting",
+        prompt: prompt.trim()
+      } satisfies Partial<AiImageEditRequest>,
       sequential_image_generation: "disabled",
       response_format: "url",
       size: "2K",

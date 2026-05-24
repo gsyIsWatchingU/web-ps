@@ -3,6 +3,7 @@ import {
   canvasBackgroundModes,
   canvasPresets,
   createDefaultDoodleStyle,
+  getImageLayerSource,
   enhanceProfiles,
   imageFilterPresets,
   layerTypeLabels,
@@ -416,6 +417,7 @@ export function EditorWorkspace() {
     setPlatformPreset,
     setCanvasPreset,
     setCanvasDisplayBackground,
+    setCanvasSafeAreaInset,
     setCanvasViewport,
     setRepairBrushSize,
     setRepairGuidePreviewEnabled,
@@ -681,7 +683,7 @@ export function EditorWorkspace() {
       return;
     }
 
-    const targetUrl = imageLayer.source;
+    const targetUrl = getImageLayerSource(imageLayer);
 
     const isValidImageSource =
       targetUrl.startsWith("http://") ||
@@ -1244,8 +1246,9 @@ export function EditorWorkspace() {
       }
 
       if (activeTool === "ai3d") {
-        const isUrlImage = selectedImageLayer.source.startsWith("http://") || selectedImageLayer.source.startsWith("https://");
-        const isBase64Image = selectedImageLayer.source.startsWith("data:image/");
+        const selectedImageSource = getImageLayerSource(selectedImageLayer);
+        const isUrlImage = selectedImageSource.startsWith("http://") || selectedImageSource.startsWith("https://");
+        const isBase64Image = selectedImageSource.startsWith("data:image/");
         const canGenerate = isUrlImage || isBase64Image;
         const task = selectedImageLayer.aiMeta.model3dTask;
         return (
@@ -2058,6 +2061,19 @@ export function EditorWorkspace() {
                       type="color"
                       value={canvasDisplayBackground.color}
                     />
+                  </label>
+                  <label className="workspace__property">
+                    <span className="workspace__property-label">安全区</span>
+                    <input
+                      className="workspace__text-input"
+                      max={Math.floor(Math.min(document.canvas.width, document.canvas.height) / 2)}
+                      min={0}
+                      onChange={(event) => setCanvasSafeAreaInset(Number(event.target.value))}
+                      step={1}
+                      type="number"
+                      value={document.canvas.safeAreaInset}
+                    />
+                    <div className="workspace__property-value">{document.canvas.safeAreaInset}px</div>
                   </label>
                   <label className="workspace__property">
                     <span className="workspace__property-label">画布缩放</span>

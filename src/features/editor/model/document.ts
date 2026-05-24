@@ -158,9 +158,66 @@ export type ImageAiMeta = {
   };
 };
 
+export type ImageSourceOrigin = "local" | "remote" | "generated";
+
+export type ImageAsset = {
+  assetId: string;
+  sourceUrl: string;
+  originalWidth: number;
+  originalHeight: number;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  hash: string | null;
+  createdAt: string;
+};
+
+export type AssetRegistry = Record<string, ImageAsset>;
+
+export type RenderRequest = {
+  format: "png" | "jpeg";
+  quality: number;
+  qualityPreset: ExportQualityPreset;
+  resizeMode: ExportResizeMode;
+  sizePreset: ExportSizePreset;
+  width: number;
+  height: number;
+  scalePercent: number;
+  background: {
+    color: string;
+    transparent: boolean;
+  };
+};
+
+export type RenderResult = {
+  documentId: string;
+  version: number;
+  format: RenderRequest["format"];
+  width: number;
+  height: number;
+  previewUrl: string | null;
+  downloadUrl: string | null;
+};
+
+export type AiImageEditRequest = {
+  documentId: string;
+  documentVersion: number;
+  layerId: string;
+  assetId: string | null;
+  crop: ImageCrop;
+  prompt: string;
+  mode: "guided_repaint" | "inpainting";
+  imageDataUrl: string;
+  maskDataUrl: string;
+  guideDataUrl?: string;
+};
+
 export type ImageLayer = LayerBase & {
   type: "image";
   source: string;
+  assetId: string | null;
+  sourceUrl: string | null;
+  sourceDataUrl: string | null;
+  sourceOrigin: ImageSourceOrigin;
   originalWidth: number;
   originalHeight: number;
   crop: ImageCrop;
@@ -306,10 +363,13 @@ export type WorkflowMeta = {
 
 export type EditorDocument = {
   id: string;
+  version: number;
   name: string;
   canvas: CanvasModel;
   layers: EditorLayer[];
   exportConfig: ExportConfig;
+  renderRequest: RenderRequest;
+  assetRegistry: AssetRegistry;
   draftMeta: DraftMeta;
   workflowMeta: WorkflowMeta;
   templateMeta: TemplateMeta;
@@ -835,6 +895,10 @@ export function createDefaultImageAiMeta(): ImageAiMeta {
   };
 }
 
+export function createDefaultAssetRegistry(): AssetRegistry {
+  return {};
+}
+
 export function createDefaultExportConfig(
   canvas: Pick<CanvasModel, "width" | "height"> = getCanvasPreset("4:5")
 ): ExportConfig {
@@ -849,6 +913,37 @@ export function createDefaultExportConfig(
     height: canvas.height,
     scalePercent: 100
   };
+}
+
+export function createDefaultRenderRequest(
+  canvas: Pick<CanvasModel, "width" | "height" | "backgroundColor"> = {
+    ...getCanvasPreset("4:5"),
+    backgroundColor: "#fbf6ef"
+  },
+  exportConfig: ExportConfig = createDefaultExportConfig(canvas)
+): RenderRequest {
+  return {
+    format: exportConfig.format,
+    quality: exportConfig.quality,
+    qualityPreset: exportConfig.qualityPreset,
+    resizeMode: exportConfig.resizeMode,
+    sizePreset: exportConfig.sizePreset,
+    width: exportConfig.width,
+    height: exportConfig.height,
+    scalePercent: exportConfig.scalePercent,
+    background: {
+      color: canvas.backgroundColor,
+      transparent: false
+    }
+  };
+}
+
+export function getImageLayerSource(layer: ImageLayer) {
+  return layer.sourceUrl ?? layer.sourceDataUrl ?? layer.source;
+}
+
+export function isPendingImageLayer(layer: ImageLayer) {
+  return layer.source === "pending-upload" && !layer.sourceUrl && !layer.sourceDataUrl;
 }
 
 export function createDefaultTemplateMeta(): TemplateMeta {
@@ -878,11 +973,21 @@ export function getDefaultSafeAreaInset(width: number, height: number) {
   return Math.round(Math.max(36, Math.min(shortEdge * 0.045, 64)));
 }
 
+export function createBlankDocument(): EditorDocument {
+  const document = createInitialDocument();
+
+  return {
+    ...document,
+    layers: []
+  };
+}
+
 export function createInitialDocument(): EditorDocument {
   const preset = getCanvasPreset("4:5");
 
   return {
     id: "doc-editor-mvp",
+    version: 1,
     name: "AIGC 修图工作台",
     canvas: {
       presetId: preset.id,
@@ -907,6 +1012,10 @@ export function createInitialDocument(): EditorDocument {
         zIndex: 0,
         transform: createDefaultTransform(),
         source: "pending-upload",
+        assetId: null,
+        sourceUrl: null,
+        sourceDataUrl: null,
+        sourceOrigin: "local",
         originalWidth: 960,
         originalHeight: 960,
         crop: createImageCrop(960, 960),
@@ -966,6 +1075,15 @@ export function createInitialDocument(): EditorDocument {
       }
     ],
     exportConfig: createDefaultExportConfig(preset),
+    renderRequest: createDefaultRenderRequest(
+      {
+        width: preset.width,
+        height: preset.height,
+        backgroundColor: "#fbf6ef"
+      },
+      createDefaultExportConfig(preset)
+    ),
+    assetRegistry: createDefaultAssetRegistry(),
     draftMeta: {
       enabled: true,
       storageKey: "web-ps/editor-draft",
