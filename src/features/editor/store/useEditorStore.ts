@@ -55,7 +55,13 @@ import {
 } from "../model/ecommerce";
 import { editorDocumentSchema } from "../model/document.schema";
 import { runSeed3dTask } from "../runtime/aiBridge";
-import { uploadImageAsset } from "../runtime/backendBridge";
+import {
+  BackendRequestError,
+  hasBackendConfig,
+  loadEditorDocument,
+  saveEditorDocument,
+  uploadImageAsset
+} from "../runtime/backendBridge";
 import {
   buildRepairPrompt,
   type RepairMode,
@@ -94,6 +100,9 @@ type RepairSession = {
   isSubmitting: boolean;
 } | null;
 
+type SyncStatus = "idle" | "saving" | "saved" | "error";
+type HydrationStatus = "booting" | "ready" | "error";
+
 type EditorStore = {
   activeTool: EditorTool;
   selectedLayerIds: string[];
@@ -102,6 +111,13 @@ type EditorStore = {
   repairSession: RepairSession;
   historyPast: HistoryEntry[];
   historyFuture: HistoryEntry[];
+  syncStatus: SyncStatus;
+  lastSyncedAt: string | null;
+  lastSyncError: string | null;
+  hydrationStatus: HydrationStatus;
+  pendingServerSave: boolean;
+  hydrateDocumentFromServer: () => Promise<void>;
+  flushDocumentSave: (options?: { force?: boolean }) => Promise<boolean>;
   setActiveTool: (tool: EditorTool) => void;
   createDocumentFromTemplate: (templateId: TemplateDefinitionId) => void;
   createBlankDocument: (presetId: PlatformPresetId) => void;
@@ -181,6 +197,10 @@ type EditorStore = {
 };
 
 const HISTORY_LIMIT = 60;
+const SERVER_SYNC_CONFLICT_MESSAGE =
+  "Cloud version changed remotely. Refresh or reopen this draft before syncing again.";
+let inFlightDocumentSave: Promise<boolean> | null = null;
+let queueDocumentSaveAfterCurrent = false;
 
 function touchDocument(document: EditorDocument, layers?: EditorLayer[]) {
   return validateDocument({
@@ -230,6 +250,7 @@ function commitDocumentChange(
     ...patch,
     document,
     selectedLayerIds,
+    pendingServerSave: true,
     historyPast: trimHistory([
       ...state.historyPast,
       createHistoryEntry(state.document, state.selectedLayerIds)
@@ -352,61 +373,13 @@ function loadInitialDocument(): EditorDocument {
   const fallback = createInitialDocument();
 
   if (typeof window === "undefined") {
-    return normalizeCommerceFields(editorDocumentSchema.parse(fallback) as EditorDocument);
+    return normalizeLoadedDocument(fallback);
   }
 
   try {
-    const raw = window.localStorage.getItem(fallback.draftMeta.storageKey);
-
-    if (!raw) {
-      return normalizeCommerceFields(editorDocumentSchema.parse(fallback) as EditorDocument);
-    }
-
-    const parsed = editorDocumentSchema.parse(JSON.parse(raw)) as EditorDocument;
-
-    const parsedExportConfig = parsed.exportConfig as Partial<EditorDocument["exportConfig"]> &
-      Record<string, unknown>;
-    const normalizedExportConfig: EditorDocument["exportConfig"] = {
-      ...createDefaultExportConfig({
-        width: parsed.canvas.width,
-        height: parsed.canvas.height
-      }),
-      ...parsedExportConfig,
-      qualityPreset: parsedExportConfig.qualityPreset === "standard" ? "standard" : "high",
-      resizeMode: parsedExportConfig.resizeMode === "scale" ? "scale" : "fixed",
-      sizePreset:
-        parsedExportConfig.sizePreset === "free" ||
-        parsedExportConfig.sizePreset === "1inch" ||
-        parsedExportConfig.sizePreset === "2inch"
-          ? parsedExportConfig.sizePreset
-          : "group"
-    };
-
-    if (normalizedExportConfig.resizeMode === "fixed" && normalizedExportConfig.sizePreset === "group") {
-      normalizedExportConfig.width = parsed.canvas.width;
-      normalizedExportConfig.height = parsed.canvas.height;
-    }
-
-    return normalizeCommerceFields(stripTransientDocumentState({
-      ...parsed,
-      exportConfig: normalizedExportConfig,
-      renderRequest:
-        parsed.renderRequest ??
-        createDefaultRenderRequest(
-          {
-            width: parsed.canvas.width,
-            height: parsed.canvas.height,
-            backgroundColor: parsed.canvas.backgroundColor
-          },
-          normalizedExportConfig
-        ),
-      workflowMeta: {
-        ...parsed.workflowMeta,
-        sceneTag: getCanvasPreset(parsed.canvas.presetId).scene
-      }
-    }));
+    return loadPersistedDraftDocument() ?? normalizeLoadedDocument(fallback);
   } catch {
-    return normalizeCommerceFields(editorDocumentSchema.parse(fallback) as EditorDocument);
+    return normalizeLoadedDocument(fallback);
   }
 }
 
@@ -429,6 +402,68 @@ function stripTransientDocumentState(document: EditorDocument): EditorDocument {
       viewport: createDefaultCanvasViewport()
     }
   };
+}
+
+function isTemporaryDocumentId(documentId: string | null | undefined) {
+  return !documentId || documentId.startsWith("doc-") || documentId.startsWith("template-");
+}
+
+function normalizeLoadedDocument(document: EditorDocument) {
+  const parsed = editorDocumentSchema.parse(document) as EditorDocument;
+  const parsedExportConfig = parsed.exportConfig as Partial<EditorDocument["exportConfig"]> &
+    Record<string, unknown>;
+  const normalizedExportConfig: EditorDocument["exportConfig"] = {
+    ...createDefaultExportConfig({
+      width: parsed.canvas.width,
+      height: parsed.canvas.height
+    }),
+    ...parsedExportConfig,
+    qualityPreset: parsedExportConfig.qualityPreset === "standard" ? "standard" : "high",
+    resizeMode: parsedExportConfig.resizeMode === "scale" ? "scale" : "fixed",
+    sizePreset:
+      parsedExportConfig.sizePreset === "free" ||
+      parsedExportConfig.sizePreset === "1inch" ||
+      parsedExportConfig.sizePreset === "2inch"
+        ? parsedExportConfig.sizePreset
+        : "group"
+  };
+
+  if (normalizedExportConfig.resizeMode === "fixed" && normalizedExportConfig.sizePreset === "group") {
+    normalizedExportConfig.width = parsed.canvas.width;
+    normalizedExportConfig.height = parsed.canvas.height;
+  }
+
+  return normalizeCommerceFields(
+    stripTransientDocumentState({
+      ...parsed,
+      exportConfig: normalizedExportConfig,
+      renderRequest:
+        parsed.renderRequest ??
+        createDefaultRenderRequest(
+          {
+            width: parsed.canvas.width,
+            height: parsed.canvas.height,
+            backgroundColor: parsed.canvas.backgroundColor
+          },
+          normalizedExportConfig
+        ),
+      workflowMeta: {
+        ...parsed.workflowMeta,
+        sceneTag: getCanvasPreset(parsed.canvas.presetId).scene
+      }
+    })
+  );
+}
+
+function loadPersistedDraftDocument() {
+  const fallback = createInitialDocument();
+  const raw = window.localStorage.getItem(fallback.draftMeta.storageKey);
+
+  if (!raw) {
+    return null;
+  }
+
+  return normalizeLoadedDocument(JSON.parse(raw) as EditorDocument);
 }
 
 function buildImageTransform(
@@ -701,6 +736,139 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   repairSession: null,
   historyPast: [],
   historyFuture: [],
+  syncStatus: hasBackendConfig() ? "idle" : "idle",
+  lastSyncedAt: null,
+  lastSyncError: null,
+  hydrationStatus: "booting",
+  pendingServerSave: false,
+  hydrateDocumentFromServer: async () => {
+    if (!hasBackendConfig()) {
+      set({ hydrationStatus: "ready" });
+      return;
+    }
+
+    const currentDocument = get().document;
+
+    if (isTemporaryDocumentId(currentDocument.id)) {
+      set({ hydrationStatus: "ready" });
+      return;
+    }
+
+    try {
+      const remoteDocument = await loadEditorDocument(currentDocument.id);
+
+      if (!remoteDocument) {
+        set({ hydrationStatus: "ready" });
+        return;
+      }
+
+      const normalizedDocument = normalizeLoadedDocument(remoteDocument);
+
+      set({
+        document: normalizedDocument,
+        selectedLayerIds: getDefaultSelectedLayerIds(normalizedDocument),
+        cropSession: null,
+        repairSession: null,
+        historyPast: [],
+        historyFuture: [],
+        syncStatus: "saved",
+        lastSyncedAt: normalizedDocument.updatedAt,
+        lastSyncError: null,
+        hydrationStatus: "ready",
+        pendingServerSave: false
+      });
+    } catch (error) {
+      set({
+        hydrationStatus: "error",
+        syncStatus: "error",
+        lastSyncError: error instanceof Error ? error.message : "Failed to restore remote draft."
+      });
+    }
+  },
+  flushDocumentSave: async (options) => {
+    if (!hasBackendConfig()) {
+      return false;
+    }
+
+    const currentState = get();
+    const shouldForce = Boolean(options?.force);
+    const syncBlockedByConflict =
+      currentState.syncStatus === "error" &&
+      currentState.lastSyncError === SERVER_SYNC_CONFLICT_MESSAGE;
+
+    if (syncBlockedByConflict && !shouldForce) {
+      return false;
+    }
+
+    if (!currentState.pendingServerSave && !shouldForce) {
+      return true;
+    }
+
+    if (inFlightDocumentSave) {
+      queueDocumentSaveAfterCurrent = true;
+      return inFlightDocumentSave;
+    }
+
+    const documentToSave = cloneDocument(currentState.document);
+
+    set({
+      syncStatus: "saving",
+      lastSyncError: null,
+      pendingServerSave: false
+    });
+
+    inFlightDocumentSave = (async () => {
+      try {
+        const saveResult = await saveEditorDocument(documentToSave);
+        const syncedAt = new Date().toISOString();
+
+        set((state) => ({
+          document:
+            state.document.id === documentToSave.id
+              ? {
+                  ...state.document,
+                  id: saveResult?.id ?? state.document.id,
+                  version: state.pendingServerSave
+                    ? state.document.version
+                    : (saveResult?.version ?? state.document.version)
+                }
+              : state.document,
+          syncStatus: "saved",
+          lastSyncedAt: syncedAt,
+          lastSyncError: null
+        }));
+
+        return true;
+      } catch (error) {
+        const isConflict =
+          error instanceof BackendRequestError &&
+          (error.status === 409 || error.status === 412);
+
+        set((state) => ({
+          syncStatus: "error",
+          lastSyncError: isConflict
+            ? SERVER_SYNC_CONFLICT_MESSAGE
+            : error instanceof Error
+              ? error.message
+              : "Failed to sync document.",
+          pendingServerSave: true
+        }));
+
+        return false;
+      } finally {
+        inFlightDocumentSave = null;
+
+        if (queueDocumentSaveAfterCurrent) {
+          queueDocumentSaveAfterCurrent = false;
+          if (get().pendingServerSave) {
+            void get().flushDocumentSave();
+          }
+        }
+      }
+    })();
+
+    return inFlightDocumentSave;
+  },
   setActiveTool: (tool) =>
     set((state) => ({
       activeTool: tool,
@@ -719,7 +887,12 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         cropSession: null,
         repairSession: null,
         historyPast: [],
-        historyFuture: []
+        historyFuture: [],
+        syncStatus: "idle",
+        lastSyncedAt: null,
+        lastSyncError: null,
+        hydrationStatus: "ready",
+        pendingServerSave: true
       };
     }),
   createBlankDocument: (presetId) =>
@@ -733,7 +906,12 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         cropSession: null,
         repairSession: null,
         historyPast: [],
-        historyFuture: []
+        historyFuture: [],
+        syncStatus: "idle",
+        lastSyncedAt: null,
+        lastSyncError: null,
+        hydrationStatus: "ready",
+        pendingServerSave: true
       };
     }),
   setPlatformPreset: (presetId) =>
@@ -818,7 +996,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
             color: state.document.canvas.backgroundColor
           }
         }
-      })
+      }),
+      pendingServerSave: true
     })),
   setCanvasSafeAreaInset: (inset) =>
     set((state) => {
@@ -834,7 +1013,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
             ...state.document.canvas,
             safeAreaInset
           }
-        })
+        }),
+        pendingServerSave: true
       };
     }),
   setCanvasViewport: (viewport) =>
@@ -1536,7 +1716,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
           version: state.document.workflowMeta.version + 1,
           lastExportedAt: new Date().toISOString()
         }
-      }
+      },
+      pendingServerSave: true
     })),
   markWorkflowApplied: () =>
     set((state) => ({
@@ -1546,7 +1727,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
           ...state.document.workflowMeta,
           lastAppliedAt: new Date().toISOString()
         }
-      }
+      },
+      pendingServerSave: true
     })),
   updateAiPrompt: (layerId, prompt) =>
     set((state) =>
@@ -1845,7 +2027,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
               }
             : entry
         )
-      )
+      ),
+      pendingServerSave: true
     }));
 
     try {
@@ -1898,7 +2081,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
                   }
                 : entry
             )
-          )
+          ),
+          pendingServerSave: true
         }));
 
         return { success: false, errorMessage: result.errorMessage ?? "局部重绘失败。" };
@@ -1978,7 +2162,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
                 }
               : entry
           )
-        )
+        ),
+        pendingServerSave: true
       }));
 
       return { success: false, errorMessage };
@@ -2036,7 +2221,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
                 }
               : entry
           )
-        )
+        ),
+        pendingServerSave: true
       }));
 
       if (result.status === "succeeded") {
@@ -2064,7 +2250,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
                 }
               : entry
           )
-        )
+        ),
+        pendingServerSave: true
       }));
 
       return { success: false, errorMessage: message };
@@ -2078,7 +2265,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
       cropSession: null,
       repairSession: null,
       historyPast: [],
-      historyFuture: []
+      historyFuture: [],
+      pendingServerSave: true
     })),
   undo: () =>
     set((state) => {
@@ -2097,7 +2285,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
         historyFuture: [
           createHistoryEntry(state.document, state.selectedLayerIds),
           ...state.historyFuture.map(cloneHistoryEntry)
-        ]
+        ],
+        pendingServerSave: true
       };
     }),
   redo: () =>
@@ -2117,7 +2306,8 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
           ...state.historyPast.map(cloneHistoryEntry),
           createHistoryEntry(state.document, state.selectedLayerIds)
         ]),
-        historyFuture: rest.map(cloneHistoryEntry)
+        historyFuture: rest.map(cloneHistoryEntry),
+        pendingServerSave: true
       };
     })
 }));

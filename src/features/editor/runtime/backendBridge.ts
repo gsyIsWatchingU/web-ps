@@ -34,6 +34,16 @@ type SaveDocumentResponse = {
   version?: number;
 };
 
+export class BackendRequestError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "BackendRequestError";
+    this.status = status;
+  }
+}
+
 type RenderPreviewResponse = {
   documentId?: string;
   document_id?: string;
@@ -59,6 +69,10 @@ function buildEndpoint(path: string) {
   return `${normalizeBaseURL()}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+function createBackendError(action: string, response: Response) {
+  return new BackendRequestError(`Failed to ${action}: ${response.status}`, response.status);
+}
+
 export async function uploadImageAsset(file: File): Promise<ImageAsset | null> {
   if (!hasBackendConfig()) {
     return null;
@@ -73,7 +87,7 @@ export async function uploadImageAsset(file: File): Promise<ImageAsset | null> {
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to upload source image: ${response.status}`);
+    throw createBackendError("upload source image", response);
   }
 
   const payload = (await response.json()) as UploadImageResponse;
@@ -96,6 +110,29 @@ export async function uploadImageAsset(file: File): Promise<ImageAsset | null> {
   };
 }
 
+export async function loadEditorDocument(documentId: string): Promise<EditorDocument | null> {
+  if (!hasBackendConfig()) {
+    return null;
+  }
+
+  const response = await fetch(buildEndpoint(`/documents/${documentId}`), {
+    method: "GET",
+    headers: {
+      Accept: "application/json"
+    }
+  });
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  if (!response.ok) {
+    throw createBackendError("load document", response);
+  }
+
+  return (await response.json()) as EditorDocument;
+}
+
 export async function saveEditorDocument(document: EditorDocument): Promise<Pick<EditorDocument, "id" | "version"> | null> {
   if (!hasBackendConfig()) {
     return null;
@@ -114,7 +151,7 @@ export async function saveEditorDocument(document: EditorDocument): Promise<Pick
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to save document: ${response.status}`);
+    throw createBackendError("save document", response);
   }
 
   const payload = (await response.json()) as SaveDocumentResponse;
@@ -144,7 +181,7 @@ export async function requestRenderPreview(document: EditorDocument): Promise<Re
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to render preview: ${response.status}`);
+    throw createBackendError("render preview", response);
   }
 
   const payload = (await response.json()) as RenderPreviewResponse;

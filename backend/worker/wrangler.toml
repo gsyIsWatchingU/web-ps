@@ -1,0 +1,16 @@
+name = "web-ps-editor-worker"
+main = "src/index.js"
+compatibility_date = "2026-05-25"
+
+[vars]
+CORS_ORIGIN = "*"
+PUBLIC_ASSET_BASE_URL = ""
+
+[[d1_databases]]
+binding = "DB"
+database_name = "web-ps-editor"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+[[r2_buckets]]
+binding = "ASSETS_BUCKET"
+bucket_name = "web-ps-editor-assets"

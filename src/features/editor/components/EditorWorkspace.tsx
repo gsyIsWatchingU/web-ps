@@ -24,6 +24,7 @@ import {
   platformPresets
 } from "../model/ecommerce";
 import { hasAiConfig } from "../runtime/aiConfig";
+import { hasBackendConfig } from "../runtime/backendBridge";
 import { exportDocument } from "../runtime/exportDocument";
 import { renderPresetPreviewDataUrl } from "../runtime/lutEngine";
 import { useEditorStore } from "../store/useEditorStore";
@@ -145,6 +146,36 @@ function formatTime(timestamp: string | null) {
     hour: "2-digit",
     minute: "2-digit"
   });
+}
+
+function formatSyncStatus(options: {
+  backendEnabled: boolean;
+  hydrationStatus: "booting" | "ready" | "error";
+  syncStatus: "idle" | "saving" | "saved" | "error";
+  lastSyncedAt: string | null;
+  lastSyncError: string | null;
+}) {
+  if (!options.backendEnabled) {
+    return "Local draft only";
+  }
+
+  if (options.hydrationStatus === "booting") {
+    return "Restoring cloud draft...";
+  }
+
+  if (options.syncStatus === "saving") {
+    return "Cloud saving...";
+  }
+
+  if (options.syncStatus === "saved" && options.lastSyncedAt) {
+    return `Cloud synced ${formatTime(options.lastSyncedAt)}`;
+  }
+
+  if (options.syncStatus === "error") {
+    return options.lastSyncError ?? "Cloud sync failed";
+  }
+
+  return "Local draft pending cloud sync";
 }
 
 function isDashScopeAccountIssueMessage(message: string | null) {
@@ -401,10 +432,16 @@ export function EditorWorkspace() {
     clearCanvas,
     commitCropSession,
     document,
+    flushDocumentSave,
+    hydrationStatus,
+    hydrateDocumentFromServer,
     duplicateLayer,
     historyPast,
     historyFuture,
     importImage,
+    lastSyncError,
+    lastSyncedAt,
+    pendingServerSave,
     recordWorkflowExport,
     moveLayer,
     redo,
@@ -422,6 +459,7 @@ export function EditorWorkspace() {
     setRepairBrushSize,
     setRepairGuidePreviewEnabled,
     setRepairToolMode,
+    syncStatus,
     setImageCropAspect,
     setSelectedLayerIds,
     startRepairSession,
@@ -467,6 +505,14 @@ export function EditorWorkspace() {
   const platformPreset = getPlatformPreset(document.templateMeta.platformPresetId);
   const suggestedExportFilename = buildSuggestedExportFilename(document);
   const aiConfigured = hasAiConfig();
+  const backendEnabled = hasBackendConfig();
+  const cloudSyncStatus = formatSyncStatus({
+    backendEnabled,
+    hydrationStatus,
+    syncStatus,
+    lastSyncedAt,
+    lastSyncError
+  });
   const activeCropDraft =
     cropSession && selectedImageLayer && cropSession.layerId === selectedImageLayer.id
       ? cropSession.draft
@@ -534,6 +580,10 @@ export function EditorWorkspace() {
   }, [document.draftMeta.lastSavedAt]);
 
   useEffect(() => {
+    void hydrateDocumentFromServer();
+  }, [hydrateDocumentFromServer]);
+
+  useEffect(() => {
     window.dispatchEvent(
       new CustomEvent(EXPORT_STATE_EVENT, {
         detail: { isExporting }
@@ -561,6 +611,18 @@ export function EditorWorkspace() {
 
     return () => window.clearTimeout(timer);
   }, [document]);
+
+  useEffect(() => {
+    if (!backendEnabled || hydrationStatus !== "ready" || !pendingServerSave) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void flushDocumentSave();
+    }, 1100);
+
+    return () => window.clearTimeout(timer);
+  }, [backendEnabled, flushDocumentSave, hydrationStatus, pendingServerSave]);
 
   useEffect(() => {
     if (activeTool === "crop" && selectedImageLayer) {
@@ -670,6 +732,17 @@ export function EditorWorkspace() {
     setLeftSidebarTab("tools");
     setRightSidebarTab("layer");
     setFeedbackMessage("画布已清空。");
+  };
+
+  const handleRetryCloudSync = async () => {
+    const synced = await flushDocumentSave({ force: true });
+
+    if (!synced) {
+      message.warning(lastSyncError ?? "Cloud sync failed.");
+      return;
+    }
+
+    setFeedbackMessage("Cloud sync completed.");
   };
 
   const handleAi3d = async () => {
@@ -2241,7 +2314,7 @@ export function EditorWorkspace() {
                 添加装饰
               </button>
               <button className="workspace__tool-button" onClick={() => setIsGlbPreviewOpen(true)} type="button">
-                预览文件
+                预览 3D
               </button>
             </div>
           </div>
@@ -2274,6 +2347,18 @@ export function EditorWorkspace() {
             <span>安全区: {document.canvas.safeAreaInset}px</span>
             <span>缩放：{Math.round(viewport.zoom * 100)}%</span>
             <span>平移：{Math.round(viewport.panX)} / {Math.round(viewport.panY)}</span>
+          </div>
+        </section>
+        <section className="workspace__statusbar">
+          <div className="workspace__status-group">
+            <span>Cloud: {cloudSyncStatus}</span>
+            <span>Draft: {document.draftMeta.enabled ? formatTime(lastAutoSavedAt) : "Off"}</span>
+            <span>Workflow: {String(document.workflowMeta.version).padStart(3, "0")}</span>
+            {backendEnabled && syncStatus === "error" ? (
+              <button className="workspace__action-button" onClick={handleRetryCloudSync} type="button">
+                Retry sync
+              </button>
+            ) : null}
           </div>
         </section>
       </main>

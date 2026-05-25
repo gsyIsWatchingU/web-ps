@@ -8,7 +8,20 @@ type WorkflowApplyResult = {
   message: string;
 };
 
-export async function applyToWorkflow(document: EditorDocument): Promise<WorkflowApplyResult> {
+type WorkflowApplyOptions = {
+  beforeApply?: () => Promise<unknown>;
+  resolveDocument?: () => EditorDocument;
+};
+
+export async function applyToWorkflow(
+  document: EditorDocument,
+  options?: WorkflowApplyOptions
+): Promise<WorkflowApplyResult> {
+  if (options?.beforeApply) {
+    await options.beforeApply();
+  }
+
+  const effectiveDocument = options?.resolveDocument?.() ?? document;
   const targetWindow = window.opener ?? window.parent;
 
   if (!targetWindow || targetWindow === window) {
@@ -18,11 +31,11 @@ export async function applyToWorkflow(document: EditorDocument): Promise<Workflo
     };
   }
 
-  let previewImageDataUrl = await renderDocumentDataUrl(document);
+  let previewImageDataUrl = await renderDocumentDataUrl(effectiveDocument);
   let previewResult = null;
 
   try {
-    previewResult = await requestRenderPreview(document);
+    previewResult = await requestRenderPreview(effectiveDocument);
     if (previewResult?.previewUrl) {
       previewImageDataUrl = previewResult.previewUrl;
     }
@@ -30,7 +43,7 @@ export async function applyToWorkflow(document: EditorDocument): Promise<Workflo
     previewResult = null;
   }
 
-  const assetRefs = document.layers
+  const assetRefs = effectiveDocument.layers
     .filter((layer) => layer.type === "image")
     .map((layer) => ({
       layerId: layer.id,
@@ -44,20 +57,20 @@ export async function applyToWorkflow(document: EditorDocument): Promise<Workflo
   targetWindow.postMessage(
     {
       type: "web-ps:apply-result",
-      filename: `${document.name}.${document.exportConfig.format === "jpeg" ? "jpg" : "png"}`,
-      documentId: document.id,
-      documentVersion: document.version,
-      format: document.exportConfig.format,
-      sceneTag: document.workflowMeta.sceneTag,
-      version: document.workflowMeta.version,
+      filename: `${effectiveDocument.name}.${effectiveDocument.exportConfig.format === "jpeg" ? "jpg" : "png"}`,
+      documentId: effectiveDocument.id,
+      documentVersion: effectiveDocument.version,
+      format: effectiveDocument.exportConfig.format,
+      sceneTag: effectiveDocument.workflowMeta.sceneTag,
+      version: effectiveDocument.workflowMeta.version,
       assetRefs,
-      renderRequest: document.renderRequest,
+      renderRequest: effectiveDocument.renderRequest,
       previewImageDataUrl,
       imageDataUrl: previewImageDataUrl,
       previewResult,
       timestamp: new Date().toISOString()
     },
-    document.workflowMeta.targetOrigin || "*"
+    effectiveDocument.workflowMeta.targetOrigin || "*"
   );
 
   return {
