@@ -11,15 +11,34 @@ import { MessageProvider } from "../shared/message";
 const EXPORT_STATE_EVENT = "editor:export-state";
 const OPEN_EXPORT_DIALOG_EVENT = "editor:open-export-dialog";
 
+const APP_ROUTES = {
+  editor: "/editor",
+  help: "/help",
+  templates: "/templates"
+} as const;
+
+type AppRoute = (typeof APP_ROUTES)[keyof typeof APP_ROUTES];
+
 type ExportStateDetail = {
   isExporting: boolean;
 };
 
+function resolveRoute(pathname: string): AppRoute {
+  if (pathname === APP_ROUTES.help) {
+    return APP_ROUTES.help;
+  }
+
+  if (pathname === APP_ROUTES.editor) {
+    return APP_ROUTES.editor;
+  }
+
+  return APP_ROUTES.templates;
+}
+
 export function App() {
-  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [route, setRoute] = useState<AppRoute>(() => resolveRoute(window.location.pathname));
   const [isExporting, setIsExporting] = useState(false);
   const [isProcessProductsOpen, setIsProcessProductsOpen] = useState(false);
-  const [isTemplateCenterOpen, setIsTemplateCenterOpen] = useState(true);
 
   const { document, createBlankDocument, createDocumentFromTemplate, setPlatformPreset } =
     useEditorStore();
@@ -77,6 +96,24 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    const normalizedRoute = resolveRoute(window.location.pathname);
+
+    if (window.location.pathname !== normalizedRoute) {
+      window.history.replaceState(null, "", normalizedRoute);
+    }
+
+    setRoute(normalizedRoute);
+
+    const handlePopState = () => {
+      setRoute(resolveRoute(window.location.pathname));
+      setIsProcessProductsOpen(false);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
     const handleWheel = (event: WheelEvent) => {
       if (event.ctrlKey || event.metaKey) {
         event.preventDefault();
@@ -89,6 +126,16 @@ export function App() {
     };
   }, []);
 
+  const navigateTo = (nextRoute: AppRoute) => {
+    if (nextRoute === route) {
+      return;
+    }
+
+    window.history.pushState(null, "", nextRoute);
+    setRoute(nextRoute);
+    setIsProcessProductsOpen(false);
+  };
+
   const handleExportRequest = () => {
     window.dispatchEvent(new CustomEvent(OPEN_EXPORT_DIALOG_EVENT));
   };
@@ -99,14 +146,34 @@ export function App() {
   ) => {
     createDocumentFromTemplate(templateId);
     setPlatformPreset(platformPresetId);
-    setIsTemplateCenterOpen(false);
-    setIsHelpOpen(false);
+    navigateTo(APP_ROUTES.editor);
   };
 
   const handleStartFreeEdit = (platformPresetId: PlatformPresetId) => {
     createBlankDocument(platformPresetId);
-    setIsTemplateCenterOpen(false);
-    setIsHelpOpen(false);
+    navigateTo(APP_ROUTES.editor);
+  };
+
+  const hasDraft = document.layers.length > 0;
+  const isHelpOpen = route === APP_ROUTES.help;
+  const isTemplateCenterOpen = route === APP_ROUTES.templates;
+
+  const handleTemplateButtonClick = () => {
+    if (isTemplateCenterOpen) {
+      navigateTo(APP_ROUTES.editor);
+      return;
+    }
+
+    navigateTo(APP_ROUTES.templates);
+  };
+
+  const handleHelpButtonClick = () => {
+    if (isHelpOpen) {
+      navigateTo(hasDraft ? APP_ROUTES.editor : APP_ROUTES.templates);
+      return;
+    }
+
+    navigateTo(APP_ROUTES.help);
   };
 
   return (
@@ -115,27 +182,14 @@ export function App() {
         <header className="app-shell__header">
           <div>
             <h1 className="eyebrow">Pic Boost</h1>
-            <p className="workspace__meta">
-              使用模板、平台预设和快捷修图工具，将 AI 初稿快速加工成可投放的电商素材。
-            </p>
+            <p className="workspace__meta">模板中心、帮助中心和编辑器现在使用独立路径，支持浏览器前进后退。</p>
           </div>
           <div className="app-shell__header-actions">
-            <button
-              className="app-shell__help-button"
-              onClick={() => {
-                setIsHelpOpen(false);
-                setIsTemplateCenterOpen((value) => !value);
-              }}
-              type="button"
-            >
-              {isTemplateCenterOpen ? "返回编辑器" : "模板"}
+            <button className="app-shell__help-button" onClick={handleTemplateButtonClick} type="button">
+              {isTemplateCenterOpen ? "返回编辑" : "模板页"}
             </button>
-            <button
-              className="app-shell__help-button"
-              onClick={() => setIsHelpOpen((value) => !value)}
-              type="button"
-            >
-              {isHelpOpen ? "关闭帮助" : "帮助"}
+            <button className="app-shell__help-button" onClick={handleHelpButtonClick} type="button">
+              {isHelpOpen ? "返回上一页" : "帮助页"}
             </button>
             <div className="app-shell__process-products-dropdown">
               <button
@@ -184,12 +238,12 @@ export function App() {
         </header>
 
         {isHelpOpen ? (
-          <HelpCenter onClose={() => setIsHelpOpen(false)} />
+          <HelpCenter onClose={() => navigateTo(hasDraft ? APP_ROUTES.editor : APP_ROUTES.templates)} />
         ) : isTemplateCenterOpen ? (
           <TemplateCenter
             activeTemplateName={document.templateMeta.templateName}
-            hasDraft={document.layers.length > 0}
-            onContinueDraft={() => setIsTemplateCenterOpen(false)}
+            hasDraft={hasDraft}
+            onContinueDraft={() => navigateTo(APP_ROUTES.editor)}
             onStartFreeEdit={handleStartFreeEdit}
             onUseTemplate={handleUseTemplate}
           />

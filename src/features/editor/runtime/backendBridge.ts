@@ -57,6 +57,8 @@ type RenderPreviewResponse = {
   download_url?: string;
 };
 
+const BACKEND_REQUEST_TIMEOUT_MS = 15_000;
+
 function normalizeBaseURL() {
   return backendConfig.baseURL.replace(/\/$/, "");
 }
@@ -73,6 +75,26 @@ function createBackendError(action: string, response: Response) {
   return new BackendRequestError(`Failed to ${action}: ${response.status}`, response.status);
 }
 
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs = BACKEND_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s.`);
+    }
+
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 export async function uploadImageAsset(file: File): Promise<ImageAsset | null> {
   if (!hasBackendConfig()) {
     return null;
@@ -81,7 +103,7 @@ export async function uploadImageAsset(file: File): Promise<ImageAsset | null> {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(buildEndpoint("/assets/images"), {
+  const response = await fetchWithTimeout(buildEndpoint("/assets/images"), {
     method: "POST",
     body: formData
   });
@@ -115,7 +137,7 @@ export async function loadEditorDocument(documentId: string): Promise<EditorDocu
     return null;
   }
 
-  const response = await fetch(buildEndpoint(`/documents/${documentId}`), {
+  const response = await fetchWithTimeout(buildEndpoint(`/documents/${documentId}`), {
     method: "GET",
     headers: {
       Accept: "application/json"
@@ -142,7 +164,7 @@ export async function saveEditorDocument(document: EditorDocument): Promise<Pick
   const endpoint = isCreate ? buildEndpoint("/documents") : buildEndpoint(`/documents/${document.id}`);
   const method = isCreate ? "POST" : "PUT";
 
-  const response = await fetch(endpoint, {
+  const response = await fetchWithTimeout(endpoint, {
     method,
     headers: {
       "Content-Type": "application/json"
@@ -167,7 +189,7 @@ export async function requestRenderPreview(document: EditorDocument): Promise<Re
     return null;
   }
 
-  const response = await fetch(buildEndpoint(backendConfig.previewEndpoint), {
+  const response = await fetchWithTimeout(buildEndpoint(backendConfig.previewEndpoint), {
     method: "POST",
     headers: {
       "Content-Type": "application/json"

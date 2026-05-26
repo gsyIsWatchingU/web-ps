@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react";
 import {
+  businessComponentPresets,
+  getPlatformPreset,
+  getTemplatePreviewDataUrl,
   platformPresets,
   templateDefinitions,
-  businessComponentPresets,
   type PlatformPresetId,
-  type TemplateDefinitionId,
-  getPlatformPreset
+  type TemplateDefinitionId
 } from "../model/ecommerce";
 
 type TemplateCenterProps = {
@@ -15,6 +16,8 @@ type TemplateCenterProps = {
   onContinueDraft: () => void;
   onStartFreeEdit: (platformPresetId: PlatformPresetId) => void;
 };
+
+const MAX_VISIBLE_TAGS = 3;
 
 export function TemplateCenter({
   hasDraft,
@@ -50,7 +53,7 @@ export function TemplateCenter({
         <div className="template-center__actions">
           {hasDraft ? (
             <button className="app-shell__help-button" onClick={onContinueDraft} type="button">
-              继续当前草稿{activeTemplateName ? ` · ${activeTemplateName}` : ""}
+              继续上次草稿{activeTemplateName ? ` · ${activeTemplateName}` : ""}
             </button>
           ) : null}
           <button className="app-shell__primary-button" onClick={() => onStartFreeEdit(selectedPlatformId)} type="button">
@@ -62,18 +65,15 @@ export function TemplateCenter({
       <div className="template-center__layout">
         <section className="workspace__section">
           <h3>1. 选择平台 / 场景</h3>
-          <div className="workspace__preset-grid">
+          <div className="template-center__platform-grid">
             {platformPresets.map((preset) => (
               <button
                 key={preset.id}
-                className={`workspace__preset-button ${selectedPlatformId === preset.id ? "is-active" : ""}`}
+                className={`template-center__platform-button ${selectedPlatformId === preset.id ? "is-active" : ""}`}
                 onClick={() => setSelectedPlatformId(preset.id)}
                 type="button"
               >
                 <strong>{preset.label}</strong>
-                <span className="workspace__meta">
-                  {preset.sceneTag} · {preset.recommendedFormat.toUpperCase()}
-                </span>
               </button>
             ))}
           </div>
@@ -83,12 +83,15 @@ export function TemplateCenter({
           <h3>2. 选择模板</h3>
           <div className="template-center__grid">
             {visibleTemplates.map((template) => {
-              const hasPreview = Boolean(template.previewImage) && !failedPreviews[template.id];
+              const generatedPreview = failedPreviews[template.id] ? null : getTemplatePreviewDataUrl(template.id);
+              const previewSrc = generatedPreview ?? template.previewImage;
+              const visibleComponents = template.componentIds.slice(0, MAX_VISIBLE_TAGS);
+              const hiddenComponentCount = Math.max(0, template.componentIds.length - visibleComponents.length);
 
               return (
                 <article className="template-center__card" key={template.id}>
                   <div className="template-center__preview-shell">
-                    {hasPreview ? (
+                    {previewSrc ? (
                       <img
                         alt={`${template.label} preview`}
                         className="template-center__preview-image"
@@ -98,17 +101,17 @@ export function TemplateCenter({
                             [template.id]: true
                           }))
                         }
-                        src={template.previewImage}
+                        src={previewSrc}
                       />
                     ) : (
                       <div className="template-center__preview-fallback">
                         <strong>{template.label}</strong>
-                        <span>预览不可用</span>
+                        <span>预览生成失败</span>
                       </div>
                     )}
                     <div className="template-center__preview-overlay">
                       <span className="workspace__chip workspace__chip--accent">{selectedPlatform.label}</span>
-                      <span className="workspace__chip workspace__chip--muted">{template.sceneGroupLabel}</span>
+                      <span className="template-center__layout-label">{template.layoutVariantLabel}</span>
                     </div>
                   </div>
 
@@ -117,14 +120,12 @@ export function TemplateCenter({
                       <strong>{template.label}</strong>
                       <p className="workspace__meta">{template.sceneType}</p>
                     </div>
-                    <span className="template-center__layout-label">{template.layoutVariantLabel}</span>
                   </div>
 
                   <p className="template-center__description">{template.description}</p>
-                  <p className="workspace__footer-note">{template.usageTip}</p>
 
                   <div className="template-center__tags">
-                    {template.componentIds.map((componentId) => {
+                    {visibleComponents.map((componentId) => {
                       const component = businessComponentPresets.find((item) => item.id === componentId);
 
                       return (
@@ -133,6 +134,7 @@ export function TemplateCenter({
                         </span>
                       );
                     })}
+                    {hiddenComponentCount > 0 ? <span className="workspace__chip">+{hiddenComponentCount}</span> : null}
                   </div>
 
                   <button

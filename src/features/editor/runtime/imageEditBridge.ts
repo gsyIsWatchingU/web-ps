@@ -69,6 +69,8 @@ type ImageEditResponse = {
   error_code?: string;
 };
 
+const IMAGE_EDIT_REQUEST_TIMEOUT_MS = aiConfig.timeoutMs || 120_000;
+
 function getApiBase() {
   if (
     typeof window !== "undefined" &&
@@ -197,6 +199,26 @@ function wait(ms: number) {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
   });
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs = IMAGE_EDIT_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(`AI request timed out after ${Math.round(timeoutMs / 1000)}s.`);
+    }
+
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 }
 
 export async function getImageSizeFromSource(source: string) {
@@ -580,12 +602,16 @@ async function pollImageEditTask(taskId: string): Promise<ImageRepairTaskResult>
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < aiConfig.timeoutMs) {
-    const response = await fetch(getImageEditStatusEndpoint(taskId), {
-      headers: {
-        Authorization: `Bearer ${aiConfig.apiKey}`,
-        "Content-Type": "application/json"
-      }
-    });
+    const response = await fetchWithTimeout(
+      getImageEditStatusEndpoint(taskId),
+      {
+        headers: {
+          Authorization: `Bearer ${aiConfig.apiKey}`,
+          "Content-Type": "application/json"
+        }
+      },
+      15_000
+    );
 
     const payload = (await response.json()) as ImageEditResponse;
 
@@ -646,12 +672,16 @@ async function pollGuidedRepairTask(taskId: string, model: string): Promise<Imag
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < aiConfig.timeoutMs) {
-    const response = await fetch(getRepairGenerationStatusEndpoint(taskId), {
-      headers: {
-        Authorization: `Bearer ${aiConfig.apiKey}`,
-        "Content-Type": "application/json"
-      }
-    });
+    const response = await fetchWithTimeout(
+      getRepairGenerationStatusEndpoint(taskId),
+      {
+        headers: {
+          Authorization: `Bearer ${aiConfig.apiKey}`,
+          "Content-Type": "application/json"
+        }
+      },
+      15_000
+    );
 
     const payload = (await response.json()) as ImageEditResponse;
 
@@ -732,7 +762,7 @@ async function runGuidedRepaintTask({
   }
 
   const providerModel = model || aiConfig.repairModel || aiConfig.model;
-  const response = await fetch(getImageGenerationEndpoint(), {
+  const response = await fetchWithTimeout(getImageGenerationEndpoint(), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${aiConfig.apiKey}`,
@@ -823,7 +853,7 @@ async function runInpaintingTask({
     images.push(guideDataUrl);
   }
   
-  const response = await fetch(getImageGenerationEndpoint(), {
+  const response = await fetchWithTimeout(getImageGenerationEndpoint(), {
     method: "POST",
     headers: {
       Authorization: `Bearer ${aiConfig.apiKey}`,

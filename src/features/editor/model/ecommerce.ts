@@ -134,6 +134,25 @@ type TemplateLayout = {
   components: Partial<Record<BusinessComponentPresetId, ComponentLayout>>;
 };
 
+type TemplatePreviewPalette = {
+  fill: string;
+  stroke?: string;
+  opacity?: number;
+  radius?: number;
+  lineFill?: string;
+};
+
+const templatePreviewPaletteByComponentId: Record<BusinessComponentPresetId, TemplatePreviewPalette> = {
+  headline: { fill: "#24322d", opacity: 0.96, radius: 22, lineFill: "rgba(255,255,255,0.82)" },
+  "price-tag": { fill: "#ff784f", opacity: 0.98, radius: 20, lineFill: "rgba(255,248,241,0.95)" },
+  "coupon-badge": { fill: "#4dba96", opacity: 0.98, radius: 18, lineFill: "rgba(244,255,250,0.92)" },
+  "flash-sale": { fill: "#ff5e5e", opacity: 0.98, radius: 18, lineFill: "rgba(255,245,245,0.92)" },
+  "new-tag": { fill: "#ff97b3", opacity: 0.98, radius: 16, lineFill: "rgba(255,246,249,0.9)" },
+  "free-shipping": { fill: "#355048", opacity: 0.94, radius: 16, lineFill: "rgba(244,248,246,0.92)" },
+  "gift-bonus": { fill: "#f4c7a1", opacity: 0.96, radius: 16, lineFill: "rgba(255,250,245,0.9)" },
+  "selling-points": { fill: "#fffaf4", stroke: "rgba(91, 106, 97, 0.14)", opacity: 0.98, radius: 18, lineFill: "rgba(53,80,72,0.52)" }
+};
+
 export const platformPresets: PlatformPreset[] = [
   {
     id: "douyin-product",
@@ -533,6 +552,132 @@ function toAbsoluteRect(rect: RelativeRect, canvasWidth: number, canvasHeight: n
 
 function getTemplateLayout(templateId: TemplateDefinitionId) {
   return templateLayouts[templateId];
+}
+
+function encodeSvg(value: string) {
+  return encodeURIComponent(value)
+    .replace(/%0A/g, "")
+    .replace(/%20/g, " ")
+    .replace(/%3D/g, "=")
+    .replace(/%3A/g, ":")
+    .replace(/%2F/g, "/");
+}
+
+function buildPreviewLineRects(x: number, y: number, width: number, height: number, count: number) {
+  const safeCount = Math.max(1, Math.min(count, 3));
+  const lineHeight = Math.max(5, Math.round(height * 0.12));
+  const topOffset = Math.max(8, Math.round(height * 0.2));
+  const gap = Math.max(6, Math.round(height * 0.1));
+
+  return Array.from({ length: safeCount }, (_, index) => ({
+    x: x + Math.max(8, Math.round(width * 0.12)),
+    y: y + topOffset + index * (lineHeight + gap),
+    width: Math.max(24, Math.round(width * (index === safeCount - 1 ? 0.48 : 0.7))),
+    height: lineHeight
+  }));
+}
+
+function getPreviewLineCount(componentId: BusinessComponentPresetId, content?: string) {
+  if (componentId === "selling-points") {
+    return Math.max(2, Math.min(3, (content?.split("\n").filter(Boolean).length ?? 3)));
+  }
+
+  if (componentId === "headline") {
+    return content?.includes("\n") ? 2 : 1;
+  }
+
+  return 1;
+}
+
+function getPreviewPalette(componentId: BusinessComponentPresetId, layout: ComponentLayout | undefined): TemplatePreviewPalette {
+  const base = templatePreviewPaletteByComponentId[componentId];
+  const background = layout?.style?.backgroundColor;
+  const stroke = layout?.style?.stroke;
+  const fill = background && background !== "transparent" ? background : base.fill;
+
+  return {
+    ...base,
+    fill,
+    stroke: stroke ?? base.stroke
+  };
+}
+
+function renderTemplatePreviewSvg(template: TemplateDefinition, width: number, height: number) {
+  const layout = getTemplateLayout(template.id);
+  const imageX = Math.round(width * layout.image.x);
+  const imageY = Math.round(height * layout.image.y);
+  const imageWidth = Math.round(width * Math.min(0.46, Math.max(0.22, layout.image.scaleX * 0.46)));
+  const imageHeight = Math.round(height * Math.min(0.62, Math.max(0.26, layout.image.scaleY * 0.58)));
+  const imageCenterX = imageX + Math.round(imageWidth * 0.52);
+  const imageCenterY = imageY + Math.round(imageHeight * 0.56);
+  const imageAccentRadius = Math.round(Math.min(width, height) * 0.17);
+  const imageShell = [
+    `<circle cx="${imageCenterX}" cy="${imageCenterY}" r="${imageAccentRadius}" fill="rgba(229, 208, 184, 0.9)" />`,
+    `<rect x="${imageX}" y="${imageY}" width="${imageWidth}" height="${imageHeight}" rx="${Math.round(Math.min(imageWidth, imageHeight) * 0.22)}" fill="rgba(255,248,239,0.96)" />`
+  ];
+
+  const componentRects = template.componentIds
+    .map((componentId) => {
+      const rect = layout.components[componentId] ?? fallbackComponentLayout[componentId];
+      const absolute = toAbsoluteRect(rect, width, height);
+      const palette = getPreviewPalette(componentId, layout.components[componentId]);
+      const lineRects = buildPreviewLineRects(
+        absolute.x,
+        absolute.y,
+        absolute.width,
+        absolute.height,
+        getPreviewLineCount(componentId, layout.components[componentId]?.content)
+      );
+
+      const lines = lineRects
+        .map(
+          (line) =>
+            `<rect x="${line.x}" y="${line.y}" width="${line.width}" height="${line.height}" rx="${Math.round(line.height / 2)}" fill="${palette.lineFill ?? "rgba(255,255,255,0.82)"}" />`
+        )
+        .join("");
+
+      return `<g>
+        <rect
+          x="${absolute.x}"
+          y="${absolute.y}"
+          width="${absolute.width}"
+          height="${absolute.height}"
+          rx="${palette.radius ?? 18}"
+          fill="${palette.fill}"
+          ${palette.stroke ? `stroke="${palette.stroke}" stroke-width="1"` : ""}
+          ${palette.opacity ? `fill-opacity="${palette.opacity}"` : ""}
+        />
+        ${lines}
+      </g>`;
+    })
+    .join("");
+
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect width="${width}" height="${height}" rx="24" fill="${layout.canvasBackground}" />
+    <rect x="0" y="0" width="${width}" height="${height}" rx="24" fill="url(#template-preview-bg)" />
+    ${imageShell.join("")}
+    ${componentRects}
+    <defs>
+      <linearGradient id="template-preview-bg" x1="18" y1="14" x2="${width - 12}" y2="${height - 12}" gradientUnits="userSpaceOnUse">
+        <stop stop-color="rgba(255,255,255,0.22)" />
+        <stop offset="1" stop-color="rgba(226,215,198,0.16)" />
+      </linearGradient>
+    </defs>
+  </svg>`;
+}
+
+export function getTemplatePreviewDataUrl(templateId: TemplateDefinitionId, width = 480, height = 320) {
+  const template = templateDefinitions.find((item) => item.id === templateId);
+
+  if (!template) {
+    return null;
+  }
+
+  try {
+    return `data:image/svg+xml;charset=UTF-8,${encodeSvg(renderTemplatePreviewSvg(template, width, height))}`;
+  } catch {
+    return null;
+  }
 }
 
 function getComponentLayout(

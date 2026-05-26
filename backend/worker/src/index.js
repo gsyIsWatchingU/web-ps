@@ -6,6 +6,33 @@ import {
 } from "./document.js";
 import { inferFileExtension, isSupportedMimeType, readImageMetadata } from "./image-metadata.js";
 
+const SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS editor_documents (
+    id TEXT PRIMARY KEY,
+    version INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    document_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_rendered_at TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS image_assets (
+    asset_id TEXT PRIMARY KEY,
+    storage_key TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    mime_type TEXT,
+    size_bytes INTEGER,
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL,
+    sha256_hash TEXT,
+    created_at TEXT NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_editor_documents_updated_at ON editor_documents(updated_at)",
+  "CREATE INDEX IF NOT EXISTS idx_image_assets_created_at ON image_assets(created_at)"
+];
+
+let schemaInitializationPromise = null;
+
 function json(data, init = {}) {
   const headers = new Headers(init.headers);
   headers.set("Content-Type", "application/json; charset=utf-8");
@@ -79,7 +106,24 @@ async function parseJsonBody(request) {
   }
 }
 
+async function ensureDatabaseSchema(env) {
+  if (!schemaInitializationPromise) {
+    // Some environments are deployed before D1 migrations are applied.
+    // Bootstrapping the schema here prevents save/load requests from failing hard.
+    schemaInitializationPromise = env.DB.batch(
+      SCHEMA_STATEMENTS.map((statement) => env.DB.prepare(statement))
+    ).catch((error) => {
+      schemaInitializationPromise = null;
+      throw error;
+    });
+  }
+
+  await schemaInitializationPromise;
+}
+
 async function handleCreateDocument(request, env) {
+  await ensureDatabaseSchema(env);
+
   const body = await parseJsonBody(request);
   if (!body) {
     return errorResponse(400, "VALIDATION_ERROR", "Request body must be valid JSON.");
@@ -112,6 +156,8 @@ async function handleCreateDocument(request, env) {
 }
 
 async function handleGetDocument(documentId, env) {
+  await ensureDatabaseSchema(env);
+
   const row = await env.DB.prepare(
     `
       SELECT id, version, document_json, updated_at
@@ -130,6 +176,8 @@ async function handleGetDocument(documentId, env) {
 }
 
 async function handleUpdateDocument(request, env, documentId) {
+  await ensureDatabaseSchema(env);
+
   const body = await parseJsonBody(request);
   if (!body) {
     return errorResponse(400, "VALIDATION_ERROR", "Request body must be valid JSON.");
@@ -186,6 +234,8 @@ async function handleUpdateDocument(request, env, documentId) {
 }
 
 async function handleUploadImage(request, env) {
+  await ensureDatabaseSchema(env);
+
   const formData = await request.formData();
   const file = formData.get("file");
 

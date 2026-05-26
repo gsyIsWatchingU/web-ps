@@ -1,15 +1,15 @@
 name = "web-ps-editor-worker"
 main = "src/index.js"
-compatibility_date = "2026-05-25"
+compatibility_date = "2026-05-03"
 
 [vars]
-CORS_ORIGIN = "*"
+CORS_ORIGIN = "http://localhost:5173"
 PUBLIC_ASSET_BASE_URL = ""
 
 [[d1_databases]]
 binding = "DB"
 database_name = "web-ps-editor"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "f77c400b-ed38-416d-a9c9-7f55bf0ca1af"
 
 [[r2_buckets]]
 binding = "ASSETS_BUCKET"
